@@ -1,0 +1,20 @@
+{
+  "name": "Loop — Voice Life OS",
+  "short_name": "Loop",
+  "description": "Speak it, and Loop turns it into tasks, events, and reminders that adapt to you.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12141C",
+  "theme_color": "#12141C",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Quick capture",
+      "short_name": "Capture",
+      "url": "/?listen=1",
+      "description": "Jump straight into recording a voice note"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Loop — Voice Life OS</title>
+<link rel="manifest" href="/manifest.json" />
+<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Loop</span>
+    </div>
+    <div class="profile-pill" id="profilePill" title="What Loop has learned about you">
+      Still getting to know you
+    </div>
+  </header>
+
+  <main class="stage">
+    <section class="capture">
+      <button id="micButton" class="mic-button" aria-label="Start recording">
+        <svg viewBox="0 0 24 24" class="mic-icon"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="12" y1="18" x2="12" y2="22" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span class="pulse-ring"></span>
+      </button>
+      <p class="capture-hint" id="captureHint">Tap to say what's on your mind — a task, a plan, how training's going, anything.</p>
+      <p class="live-transcript" id="liveTranscript"></p>
+    </section>
+
+    <section class="results" id="resultsPanel" hidden>
+      <h2>Just captured</h2>
+      <div id="resultsList" class="results-list"></div>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="today">Today</button>
+      <button class="tab" data-tab="tasks">Tasks</button>
+      <button class="tab" data-tab="events">Calendar</button>
+      <button class="tab" data-tab="notes">Notes</button>
+      <button class="tab" data-tab="profile">About you</button>
+    </nav>
+
+    <section class="panel" id="panel-today"></section>
+    <section class="panel" id="panel-tasks" hidden></section>
+    <section class="panel" id="panel-events" hidden></section>
+    <section class="panel" id="panel-notes" hidden></section>
+    <section class="panel" id="panel-profile" hidden></section>
+  </main>
+
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "voice-life-os",
+  "version": "1.0.0",
+  "description": "Voice-first capture app that turns spoken notes into tasks, events, and a personality profile that learns how you like to be reminded.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
