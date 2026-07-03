@@ -11,7 +11,10 @@
       "Bash(npm -v)",
       "Bash(grep \"SUPABASE_URL=$\\\\|SUPABASE_SERVICE_KEY=$\\\\|your_project_url\\\\|your_service_role\" .env)",
       "Bash(git push *)",
-      "WebFetch(domain:wellbeing-app-s2qf.onrender.com)"
+      "WebFetch(domain:wellbeing-app-s2qf.onrender.com)",
+      "Bash(rm -f get-otp-code.mjs)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

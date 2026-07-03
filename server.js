@@ -28,7 +28,16 @@ const API_TIMEOUT_MS = 30000; // don't let a hung upstream call hang our request
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// Never let browsers cache the HTML/JS — otherwise a user's phone can keep running an old
+// build after we ship a fix (which looked exactly like login "not working" after a deploy).
+// Assets are tiny, so serving fresh every time costs nothing at this scale.
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html') || filePath.endsWith('.js')) {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+  },
+}));
 
 const EXTRACT_SYSTEM_PROMPT = `You are the extraction engine behind a voice-first personal organizer used by all kinds of people (students, professionals, parents, freelancers) — not a niche tool.
 
