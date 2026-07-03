@@ -37,7 +37,27 @@ async function initAuth() {
     return;
   }
 
-  sb = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+  sb = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
+    auth: {
+      // Magic links deliver the session in the URL hash (#access_token=...).
+      // The "implicit" flow reads that directly; the default "pkce" flow expects a
+      // ?code= param + a stored verifier, which magic links don't provide → silent bounce.
+      flowType: 'implicit',
+      detectSessionInUrl: true,
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  });
+
+  // If Supabase sent back an error in the URL, show it instead of silently bouncing to login.
+  const hashParams = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+  const queryParams = new URLSearchParams(location.search || '');
+  const urlError = hashParams.get('error_description') || queryParams.get('error_description');
+  if (urlError) {
+    showLogin();
+    loginStatus.textContent = 'Login error: ' + urlError.replace(/\+/g, ' ');
+    return;
+  }
 
   // React to login/logout (also fires after the magic-link redirect lands back here).
   sb.auth.onAuthStateChange((_event, session) => {
@@ -46,7 +66,8 @@ async function initAuth() {
   });
 
   // Decide the initial screen based on any existing session.
-  const { data } = await sb.auth.getSession();
+  const { data, error } = await sb.auth.getSession();
+  if (error) console.error('getSession error:', error.message);
   if (data.session) showApp();
   else showLogin();
 }
