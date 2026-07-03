@@ -195,6 +195,11 @@ body {
 
 .panel { display: flex; flex-direction: column; gap: 10px; }
 
+/* Bug fix: the flex rule above overrides the browser's built-in [hidden] { display: none },
+   because author CSS always beats user-agent CSS. Without this, all five tab panels
+   render stacked at once and tab clicks appear to do nothing. */
+.panel[hidden] { display: none !important; }
+
 .card {
   background: var(--surface);
   border-radius: 14px;
@@ -264,3 +269,75 @@ body {
 }
 
 .profile-empty { color: var(--ink-dim); }
+
+/* ---------- Typed capture fallback (works in any browser, incl. Safari/Firefox) ---------- */
+
+.text-capture {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  max-width: 400px;
+  margin-top: 16px;
+}
+
+.text-capture input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+}
+
+.text-capture input::placeholder { color: var(--ink-dim); }
+
+.text-capture input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.text-capture button {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 12px;
+  padding: 12px 18px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.text-capture button:disabled { opacity: 0.5; cursor: default; }
+
+/* ---------- Mobile sizing: bigger mic + comfortable touch targets (~44px minimum) ---------- */
+
+@media (max-width: 480px) {
+  .mic-button { width: 120px; height: 120px; }
+  .mic-icon { width: 40px; height: 40px; }
+
+  .tab { padding: 12px 16px; font-size: 14px; }
+
+  .card-checkbox {
+    width: 24px;
+    height: 24px;
+    /* Enlarge the tappable area beyond the visible box */
+    position: relative;
+  }
+  .card-checkbox::after {
+    content: '';
+    position: absolute;
+    inset: -10px;
+  }
+
+  .card-delete {
+    font-size: 20px;
+    padding: 8px 12px;
+  }
+
+  .text-capture input { font-size: 16px; } /* 16px stops iOS from auto-zooming the page on focus */
+}

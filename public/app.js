@@ -4,6 +4,9 @@ const liveTranscript = document.getElementById('liveTranscript');
 const resultsPanel = document.getElementById('resultsPanel');
 const resultsList = document.getElementById('resultsList');
 const profilePill = document.getElementById('profilePill');
+const textForm = document.getElementById('textForm');
+const textInput = document.getElementById('textInput');
+const textSubmit = document.getElementById('textSubmit');
 
 let recognizing = false;
 let recognition = null;
@@ -11,7 +14,7 @@ let recognition = null;
 const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 if (!SpeechRecognitionAPI) {
-  captureHint.textContent = 'Voice capture needs a Chromium-based browser (Chrome, Edge, Brave). You can still browse tasks below.';
+  captureHint.textContent = 'Voice needs Chrome, Edge, or Brave — but you can type your note below instead.';
   micButton.disabled = true;
 } else {
   recognition = new SpeechRecognitionAPI();
@@ -65,32 +68,50 @@ function stopListening() {
 }
 
 async function processTranscript(transcript) {
+  textSubmit.disabled = true;
   try {
     const res = await fetch('/api/process', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript }),
+      body: JSON.stringify({
+        transcript,
+        // Positive = ahead of UTC (e.g. India = +330). Lets the server resolve
+        // "tomorrow at 7am" in YOUR timezone, not the server's.
+        tz_offset_minutes: -new Date().getTimezoneOffset(),
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
-      captureHint.textContent = `Something went wrong: ${data.error || 'unknown error'}`;
+      captureHint.textContent = data.error || 'Something went wrong — try again.';
       return;
     }
     showResults(data.parsed);
     updateProfilePill(data.profile);
     refreshAllPanels();
-    captureHint.textContent = 'Got it. Tap to capture another note.';
+    captureHint.textContent = 'Got it. Capture another whenever you like.';
   } catch (err) {
     captureHint.textContent = 'Could not reach the server. Is it running?';
     console.error(err);
+  } finally {
+    textSubmit.disabled = false;
   }
 }
+
+// Typed capture — works in every browser (Safari, Firefox, desktop) and when voice mishears.
+textForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = textInput.value.trim();
+  if (!text) return;
+  textInput.value = '';
+  captureHint.textContent = 'Working on it...';
+  processTranscript(text);
+});
 
 function showResults(parsed) {
   resultsList.innerHTML = '';
   const items = [
-    ...(parsed.tasks || []).map((t) => ({ tag: 'task', label: t.title, meta: t.due })),
-    ...(parsed.events || []).map((e) => ({ tag: 'event', label: e.title, meta: e.start })),
+    ...(parsed.tasks || []).map((t) => ({ tag: 'task', label: t.title, meta: t.due || t.due_phrase })),
+    ...(parsed.events || []).map((e) => ({ tag: 'event', label: e.title, meta: e.start || e.start_phrase })),
     ...(parsed.notes || []).map((n) => ({ tag: 'note', label: n, meta: null })),
   ];
 

@@ -32,6 +32,10 @@
       </button>
       <p class="capture-hint" id="captureHint">Tap to say what's on your mind — a task, a plan, how training's going, anything.</p>
       <p class="live-transcript" id="liveTranscript"></p>
+      <form id="textForm" class="text-capture" autocomplete="off">
+        <input id="textInput" type="text" placeholder="Or type it instead…" aria-label="Type a note" />
+        <button type="submit" id="textSubmit">Add</button>
+      </form>
     </section>
 
     <section class="results" id="resultsPanel" hidden>
