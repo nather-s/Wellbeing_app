@@ -123,14 +123,18 @@ codeForm.addEventListener('submit', async (e) => {
   if (!email || !token || !sb) return;
   codeSubmit.disabled = true;
   loginStatus.textContent = 'Verifying…';
-  const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+  const { data, error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
   codeSubmit.disabled = false;
   if (error) {
     loginStatus.textContent = error.message || 'That code didn\'t work — check it and try again.';
     return;
   }
-  // onAuthStateChange (registered in initAuth) will fire and call showApp() automatically.
   loginStatus.textContent = '';
+  // Switch screens immediately using the session we just got back — don't wait on the
+  // async onAuthStateChange event, which can be delayed or missed and leave the user
+  // stuck looking at the login screen even though they're actually already logged in
+  // (and the code is now spent, so a second click just fails with "expired").
+  if (data.session) showApp();
 });
 
 logoutBtn.addEventListener('click', async () => {
