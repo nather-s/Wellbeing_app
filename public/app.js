@@ -16,6 +16,9 @@ const loginEmail = document.getElementById('loginEmail');
 const loginSubmit = document.getElementById('loginSubmit');
 const loginStatus = document.getElementById('loginStatus');
 const logoutBtn = document.getElementById('logoutBtn');
+const codeForm = document.getElementById('codeForm');
+const loginCode = document.getElementById('loginCode');
+const codeSubmit = document.getElementById('codeSubmit');
 
 let sb = null; // Supabase browser client (login only)
 
@@ -75,6 +78,9 @@ async function initAuth() {
 function showLogin() {
   appRoot.hidden = true;
   loginScreen.hidden = false;
+  // Reset back to the "enter email" step so a fresh login always starts clean.
+  codeForm.hidden = true;
+  loginForm.hidden = false;
 }
 
 let appShown = false;
@@ -87,22 +93,44 @@ function showApp() {
   }
 }
 
+// Step 1: request a 6-digit code by email. No link, no redirect — nothing to bounce or expire
+// silently. This sidesteps the whole class of magic-link problems (email scanners consuming
+// the link before the user clicks it, browsers stripping the URL, PWA redirect quirks, etc).
 loginForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const email = loginEmail.value.trim();
   if (!email || !sb) return;
   loginSubmit.disabled = true;
   loginStatus.textContent = 'Sending…';
-  const { error } = await sb.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin },
-  });
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
   loginSubmit.disabled = false;
   if (error) {
     loginStatus.textContent = error.message || 'Something went wrong — try again.';
-  } else {
-    loginStatus.textContent = '✓ Check your email for the magic link (it may take a minute, and check spam).';
+    return;
   }
+  loginForm.hidden = true;
+  codeForm.hidden = false;
+  loginCode.focus();
+  loginStatus.textContent = '✓ Check your email for a code (may take a minute — check spam too).';
+});
+
+// Step 2: type the code back in. This calls Supabase directly and gets a session
+// immediately — no URL involved at all.
+codeForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = loginEmail.value.trim();
+  const token = loginCode.value.trim();
+  if (!email || !token || !sb) return;
+  codeSubmit.disabled = true;
+  loginStatus.textContent = 'Verifying…';
+  const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+  codeSubmit.disabled = false;
+  if (error) {
+    loginStatus.textContent = error.message || 'That code didn\'t work — check it and try again.';
+    return;
+  }
+  // onAuthStateChange (registered in initAuth) will fire and call showApp() automatically.
+  loginStatus.textContent = '';
 });
 
 logoutBtn.addEventListener('click', async () => {

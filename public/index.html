@@ -20,10 +20,14 @@
       <span class="brand-name">Loop</span>
     </div>
     <h1 class="login-title">Speak it. Loop sorts it.</h1>
-    <p class="login-sub">Enter your email and we'll send you a magic link — no password needed.</p>
+    <p class="login-sub">Enter your email and we'll send you a code — no password needed.</p>
     <form id="loginForm" class="login-form" autocomplete="on">
       <input id="loginEmail" type="email" placeholder="you@example.com" required aria-label="Email address" />
-      <button type="submit" id="loginSubmit">Send me a link</button>
+      <button type="submit" id="loginSubmit">Send me a code</button>
+    </form>
+    <form id="codeForm" class="login-form" autocomplete="one-time-code" hidden>
+      <input id="loginCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Code from your email" required aria-label="Verification code" />
+      <button type="submit" id="codeSubmit">Verify &amp; log in</button>
     </form>
     <p class="login-status" id="loginStatus"></p>
   </div>
