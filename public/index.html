@@ -12,15 +12,35 @@
 </head>
 <body>
 
-<div class="app">
+<!-- Login screen — shown until the person is signed in -->
+<div class="login-screen" id="loginScreen" hidden>
+  <div class="login-card">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Loop</span>
+    </div>
+    <h1 class="login-title">Speak it. Loop sorts it.</h1>
+    <p class="login-sub">Enter your email and we'll send you a magic link — no password needed.</p>
+    <form id="loginForm" class="login-form" autocomplete="on">
+      <input id="loginEmail" type="email" placeholder="you@example.com" required aria-label="Email address" />
+      <button type="submit" id="loginSubmit">Send me a link</button>
+    </form>
+    <p class="login-status" id="loginStatus"></p>
+  </div>
+</div>
+
+<div class="app" id="appRoot" hidden>
 
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark"></span>
       <span class="brand-name">Loop</span>
     </div>
-    <div class="profile-pill" id="profilePill" title="What Loop has learned about you">
-      Still getting to know you
+    <div class="topbar-right">
+      <div class="profile-pill" id="profilePill" title="What Loop has learned about you">
+        Still getting to know you
+      </div>
+      <button class="logout-btn" id="logoutBtn" title="Log out">Log out</button>
     </div>
   </header>
 
@@ -60,6 +80,8 @@
 
 </div>
 
+<!-- Supabase login library (loads before our app code) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/app.js"></script>
 </body>
 </html>

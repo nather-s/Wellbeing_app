@@ -8,6 +8,103 @@ const textForm = document.getElementById('textForm');
 const textInput = document.getElementById('textInput');
 const textSubmit = document.getElementById('textSubmit');
 
+// Auth-related elements
+const loginScreen = document.getElementById('loginScreen');
+const appRoot = document.getElementById('appRoot');
+const loginForm = document.getElementById('loginForm');
+const loginEmail = document.getElementById('loginEmail');
+const loginSubmit = document.getElementById('loginSubmit');
+const loginStatus = document.getElementById('loginStatus');
+const logoutBtn = document.getElementById('logoutBtn');
+
+let sb = null; // Supabase browser client (login only)
+
+// ---------- Auth ----------
+async function initAuth() {
+  // Grab the public login config from our server (URL + anon key — both safe in the browser).
+  let config;
+  try {
+    config = await fetch('/api/config').then((r) => r.json());
+  } catch {
+    loginScreen.hidden = false;
+    loginStatus.textContent = 'Could not reach the server. Is it running?';
+    return;
+  }
+
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    loginScreen.hidden = false;
+    loginStatus.textContent = 'Login is not configured yet (missing Supabase settings).';
+    return;
+  }
+
+  sb = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+
+  // React to login/logout (also fires after the magic-link redirect lands back here).
+  sb.auth.onAuthStateChange((_event, session) => {
+    if (session) showApp();
+    else showLogin();
+  });
+
+  // Decide the initial screen based on any existing session.
+  const { data } = await sb.auth.getSession();
+  if (data.session) showApp();
+  else showLogin();
+}
+
+function showLogin() {
+  appRoot.hidden = true;
+  loginScreen.hidden = false;
+}
+
+let appShown = false;
+function showApp() {
+  loginScreen.hidden = true;
+  appRoot.hidden = false;
+  if (!appShown) {
+    appShown = true;
+    refreshAllPanels();
+  }
+}
+
+loginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = loginEmail.value.trim();
+  if (!email || !sb) return;
+  loginSubmit.disabled = true;
+  loginStatus.textContent = 'Sending…';
+  const { error } = await sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin },
+  });
+  loginSubmit.disabled = false;
+  if (error) {
+    loginStatus.textContent = error.message || 'Something went wrong — try again.';
+  } else {
+    loginStatus.textContent = '✓ Check your email for the magic link (it may take a minute, and check spam).';
+  }
+});
+
+logoutBtn.addEventListener('click', async () => {
+  if (sb) await sb.auth.signOut();
+  appShown = false;
+  showLogin();
+});
+
+// Every call to our own API carries the logged-in user's token so the server knows who's asking.
+async function authedFetch(url, opts = {}) {
+  const { data } = await sb.auth.getSession();
+  const token = data?.session?.access_token;
+  const headers = { ...(opts.headers || {}), Authorization: `Bearer ${token}` };
+  const res = await fetch(url, { ...opts, headers });
+  if (res.status === 401) {
+    // Session expired — bounce back to login.
+    appShown = false;
+    showLogin();
+  }
+  return res;
+}
+
+// ---------- Voice capture ----------
 let recognizing = false;
 let recognition = null;
 
@@ -70,7 +167,7 @@ function stopListening() {
 async function processTranscript(transcript) {
   textSubmit.disabled = true;
   try {
-    const res = await fetch('/api/process', {
+    const res = await authedFetch('/api/process', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -148,10 +245,10 @@ document.querySelectorAll('.tab').forEach((tab) => {
 // ---------- Data panels ----------
 async function refreshAllPanels() {
   const [tasks, events, notes, profile] = await Promise.all([
-    fetch('/api/tasks').then((r) => r.json()),
-    fetch('/api/events').then((r) => r.json()),
-    fetch('/api/notes').then((r) => r.json()),
-    fetch('/api/profile').then((r) => r.json()),
+    authedFetch('/api/tasks').then((r) => r.json()),
+    authedFetch('/api/events').then((r) => r.json()),
+    authedFetch('/api/notes').then((r) => r.json()),
+    authedFetch('/api/profile').then((r) => r.json()),
   ]);
 
   renderTasks(tasks);
@@ -263,12 +360,12 @@ function buildCard(item, type) {
   card.querySelectorAll('[data-kind="task"]').forEach((el) => {
     if (el.classList.contains('card-checkbox')) {
       el.addEventListener('click', async () => {
-        await fetch(`/api/tasks/${item.id}/toggle`, { method: 'PATCH' });
+        await authedFetch(`/api/tasks/${item.id}/toggle`, { method: 'PATCH' });
         refreshAllPanels();
       });
     } else {
       el.addEventListener('click', async () => {
-        await fetch(`/api/tasks/${item.id}`, { method: 'DELETE' });
+        await authedFetch(`/api/tasks/${item.id}`, { method: 'DELETE' });
         refreshAllPanels();
       });
     }
@@ -276,7 +373,7 @@ function buildCard(item, type) {
 
   card.querySelectorAll('[data-kind="event"]').forEach((el) => {
     el.addEventListener('click', async () => {
-      await fetch(`/api/events/${item.id}`, { method: 'DELETE' });
+      await authedFetch(`/api/events/${item.id}`, { method: 'DELETE' });
       refreshAllPanels();
     });
   });
@@ -297,9 +394,12 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-// Support the PWA "Quick capture" shortcut: /?listen=1 jumps straight into recording.
+// Support the PWA "Quick capture" shortcut: /?listen=1 jumps straight into recording (once logged in).
 if (new URLSearchParams(location.search).get('listen') === '1' && recognition) {
-  window.addEventListener('load', () => startListening());
+  window.addEventListener('load', () => {
+    if (!appRoot.hidden) startListening();
+  });
 }
 
-refreshAllPanels();
+// Kick everything off.
+initAuth();

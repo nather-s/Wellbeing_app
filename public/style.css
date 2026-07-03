@@ -52,16 +52,107 @@ body {
   box-shadow: 0 0 0 4px rgba(242,169,59,0.15);
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 70%;
+}
+
 .profile-pill {
   font-size: 12px;
   color: var(--ink-dim);
   background: var(--surface);
   padding: 6px 12px;
   border-radius: 999px;
-  max-width: 55%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.logout-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--ink-dim);
+  font-family: var(--font-body);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 4px;
+}
+.logout-btn:hover { color: var(--ink); }
+
+/* ---------- Login screen ---------- */
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 32px 28px;
+  max-width: 380px;
+  width: 100%;
+  text-align: center;
+}
+
+.login-card .brand { justify-content: center; margin-bottom: 20px; }
+
+.login-title {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.login-sub {
+  color: var(--ink-dim);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 24px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-form input {
+  background: var(--surface-2);
+  border: 1px solid var(--surface-2);
+  border-radius: 12px;
+  padding: 14px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  text-align: center;
+}
+.login-form input:focus { outline: none; border-color: var(--accent); }
+
+.login-form button {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-form button:disabled { opacity: 0.5; cursor: default; }
+
+.login-status {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  line-height: 1.5;
+  min-height: 18px;
 }
 
 .capture {
