@@ -24,55 +24,66 @@ let sb = null; // Supabase browser client (login only)
 
 // ---------- Auth ----------
 async function initAuth() {
-  // Grab the public login config from our server (URL + anon key — both safe in the browser).
-  let config;
   try {
-    config = await fetch('/api/config').then((r) => r.json());
-  } catch {
-    loginScreen.hidden = false;
-    loginStatus.textContent = 'Could not reach the server. Is it running?';
-    return;
-  }
+    // Grab the public login config from our server (URL + anon key — both safe in the browser).
+    let config;
+    try {
+      config = await fetch('/api/config').then((r) => r.json());
+    } catch {
+      loginScreen.hidden = false;
+      loginStatus.textContent = 'Could not reach the server. Is it running?';
+      return;
+    }
 
-  if (!config.supabaseUrl || !config.supabaseAnonKey) {
-    loginScreen.hidden = false;
-    loginStatus.textContent = 'Login is not configured yet (missing Supabase settings).';
-    return;
-  }
+    if (!config.supabaseUrl || !config.supabaseAnonKey) {
+      loginScreen.hidden = false;
+      loginStatus.textContent = 'Login is not configured yet (missing Supabase settings).';
+      return;
+    }
 
-  sb = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
-    auth: {
-      // Magic links deliver the session in the URL hash (#access_token=...).
-      // The "implicit" flow reads that directly; the default "pkce" flow expects a
-      // ?code= param + a stored verifier, which magic links don't provide → silent bounce.
-      flowType: 'implicit',
-      detectSessionInUrl: true,
-      persistSession: true,
-      autoRefreshToken: true,
-    },
-  });
+    if (!window.supabase || !window.supabase.createClient) {
+      loginScreen.hidden = false;
+      loginStatus.textContent = 'Login library failed to load — check your connection and refresh.';
+      return;
+    }
 
-  // If Supabase sent back an error in the URL, show it instead of silently bouncing to login.
-  const hashParams = new URLSearchParams((location.hash || '').replace(/^#/, ''));
-  const queryParams = new URLSearchParams(location.search || '');
-  const urlError = hashParams.get('error_description') || queryParams.get('error_description');
-  if (urlError) {
-    showLogin();
-    loginStatus.textContent = 'Login error: ' + urlError.replace(/\+/g, ' ');
-    return;
-  }
+    sb = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
+      auth: {
+        flowType: 'implicit',
+        detectSessionInUrl: true,
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    });
 
-  // React to login/logout (also fires after the magic-link redirect lands back here).
-  sb.auth.onAuthStateChange((_event, session) => {
-    if (session) showApp();
+    // If Supabase sent back an error in the URL, show it instead of silently bouncing to login.
+    const hashParams = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    const queryParams = new URLSearchParams(location.search || '');
+    const urlError = hashParams.get('error_description') || queryParams.get('error_description');
+    if (urlError) {
+      showLogin();
+      loginStatus.textContent = 'Login error: ' + urlError.replace(/\+/g, ' ');
+      return;
+    }
+
+    // Only react to EXPLICIT sign-in/sign-out. The old code treated any event with a
+    // null session (cross-tab noise, INITIAL_SESSION, refresh hiccups) as "logged out"
+    // and bounced the user back to the login screen even after a successful login.
+    sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) showApp();
+      if (event === 'SIGNED_OUT') showLogin();
+    });
+
+    // Decide the initial screen based on any existing session.
+    const { data, error } = await sb.auth.getSession();
+    if (error) console.error('getSession error:', error.message);
+    if (data.session) showApp();
     else showLogin();
-  });
-
-  // Decide the initial screen based on any existing session.
-  const { data, error } = await sb.auth.getSession();
-  if (error) console.error('getSession error:', error.message);
-  if (data.session) showApp();
-  else showLogin();
+  } catch (err) {
+    // NEVER fail silently — a startup crash previously left users staring at a dead page.
+    loginScreen.hidden = false;
+    loginStatus.textContent = 'Startup error: ' + (err.message || err);
+  }
 }
 
 function showLogin() {
@@ -111,7 +122,7 @@ loginForm.addEventListener('submit', async (e) => {
   loginForm.hidden = true;
   codeForm.hidden = false;
   loginCode.focus();
-  loginStatus.textContent = '✓ Check your email for a code (may take a minute — check spam too).';
+  loginStatus.textContent = '✓ Code sent! Use the code from the NEWEST email — requesting a new code kills all older ones.';
 });
 
 // Step 2: type the code back in. This calls Supabase directly and gets a session
@@ -119,22 +130,32 @@ loginForm.addEventListener('submit', async (e) => {
 codeForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const email = loginEmail.value.trim();
-  const token = loginCode.value.trim();
-  if (!email || !token || !sb) return;
+  const token = loginCode.value.replace(/\D/g, ''); // strip spaces/dashes people paste from email
+  if (!email) { loginStatus.textContent = 'Email is missing — refresh and start again.'; return; }
+  if (!token) { loginStatus.textContent = 'Type the number code from the email.'; return; }
+  if (!sb) { loginStatus.textContent = 'Login library not ready — refresh the page.'; return; }
   codeSubmit.disabled = true;
   loginStatus.textContent = 'Verifying…';
-  const { data, error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
-  codeSubmit.disabled = false;
-  if (error) {
-    loginStatus.textContent = error.message || 'That code didn\'t work — check it and try again.';
-    return;
+  try {
+    const { data, error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+    if (error) {
+      loginStatus.textContent = 'Login failed: ' + error.message + ' — request a fresh code and use the NEWEST email.';
+      return;
+    }
+    if (!data || !data.session) {
+      // Should never happen; if it does, we want to SEE it, not stare at a dead screen.
+      loginStatus.textContent = 'Verified, but no session came back. Screenshot this and report it.';
+      return;
+    }
+    loginStatus.textContent = 'Logged in ✓';
+    // Switch screens immediately with the session we just received — never wait on the
+    // async auth event, which is exactly what left users stuck on login after success.
+    showApp();
+  } catch (err) {
+    loginStatus.textContent = 'Unexpected error: ' + (err.message || err);
+  } finally {
+    codeSubmit.disabled = false;
   }
-  loginStatus.textContent = '';
-  // Switch screens immediately using the session we just got back — don't wait on the
-  // async onAuthStateChange event, which can be delayed or missed and leave the user
-  // stuck looking at the login screen even though they're actually already logged in
-  // (and the code is now spent, so a second click just fails with "expired").
-  if (data.session) showApp();
 });
 
 logoutBtn.addEventListener('click', async () => {
