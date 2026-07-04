@@ -234,6 +234,21 @@ body {
 .energy-choices button:hover { border-color: var(--accent); }
 .energy-choices button:disabled { opacity: 0.5; cursor: default; }
 
+.google-btn {
+  margin-top: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+.google-btn:disabled { opacity: 0.6; cursor: default; }
+.google-disconnect { border-color: var(--surface-2); color: var(--ink-dim); font-weight: 400; }
+
 .capture {
   display: flex;
   flex-direction: column;

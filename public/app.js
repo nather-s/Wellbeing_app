@@ -104,6 +104,14 @@ function showApp() {
   if (!appShown) {
     appShown = true;
     refreshAllPanels();
+    // Landing back here after the Google consent screen? Tell them how it went.
+    const google = new URLSearchParams(location.search).get('google');
+    if (google === 'connected') {
+      captureHint.textContent = 'Google Calendar connected 🎉 New events and study blocks land there automatically.';
+    } else if (google === 'error') {
+      captureHint.textContent = "Google connection didn't finish — try again from the About you tab.";
+    }
+    if (google) history.replaceState(null, '', '/');
   }
 }
 
@@ -264,7 +272,8 @@ async function processTranscript(transcript) {
     refreshAllPanels();
     // The coach line is the "relief" moment — one warm sentence from the AI about
     // what they just offloaded, instead of a generic confirmation.
-    captureHint.textContent = data.parsed.coach_line || 'Captured. It\'s out of your head now.';
+    const coach = data.parsed.coach_line || 'Captured. It\'s out of your head now.';
+    captureHint.textContent = data.google_synced > 0 ? `${coach} 📅 ${data.google_synced} added to Google Calendar.` : coach;
   } catch (err) {
     captureHint.textContent = 'Could not reach the server. Is it running?';
     console.error(err);
@@ -347,17 +356,18 @@ document.querySelectorAll('.tab').forEach((tab) => {
 
 // ---------- Data panels ----------
 async function refreshAllPanels() {
-  const [tasks, events, notes, profile] = await Promise.all([
+  const [tasks, events, notes, profile, google] = await Promise.all([
     authedFetch('/api/tasks').then((r) => r.json()),
     authedFetch('/api/events').then((r) => r.json()),
     authedFetch('/api/notes').then((r) => r.json()),
     authedFetch('/api/profile').then((r) => r.json()),
+    authedFetch('/api/google/status').then((r) => r.json()).catch(() => ({ configured: false, connected: false })),
   ]);
 
   renderTasks(tasks);
   renderEvents(events);
   renderNotes(notes);
-  renderProfile(profile);
+  renderProfile(profile, google);
   renderToday(tasks, events);
   updateProfilePill(profile.summary);
   // Show the one-question onboarding until they've answered it.
@@ -481,14 +491,63 @@ function renderNotes(notes) {
     });
 }
 
-function renderProfile(profile) {
+function renderProfile(profile, google = { configured: false, connected: false }) {
   const panel = document.getElementById('panel-profile');
+
+  let googleSection;
+  if (!google.configured) {
+    googleSection = '<p class="profile-empty">Google Calendar sync isn\'t set up on this server yet.</p>';
+  } else if (google.connected) {
+    googleSection = `
+      <p>✅ Connected — new events and study blocks land on your calendar automatically.</p>
+      <button class="google-btn google-disconnect" id="googleDisconnect">Disconnect</button>
+    `;
+  } else {
+    googleSection = `
+      <p class="profile-empty">Connect your calendar and every captured event — plus auto-planned study blocks — shows up there instantly.</p>
+      <button class="google-btn" id="googleConnect">📅 Connect Google Calendar</button>
+    `;
+  }
+
   panel.innerHTML = `
     <div class="profile-card">
       <h3>What Loop has learned</h3>
       ${profile.summary ? `<p>${escapeHtml(profile.summary)}</p>` : '<p class="profile-empty">Keep dumping your days — Loop learns how you study, when your brain works, and what stresses you, then plans around it.</p>'}
     </div>
+    <div class="profile-card">
+      <h3>Google Calendar</h3>
+      ${googleSection}
+    </div>
   `;
+
+  const connectBtn = document.getElementById('googleConnect');
+  if (connectBtn) {
+    connectBtn.addEventListener('click', async () => {
+      connectBtn.disabled = true;
+      connectBtn.textContent = 'Opening Google…';
+      try {
+        const res = await authedFetch('/api/google/auth-url');
+        const data = await res.json();
+        if (res.ok && data.url) {
+          window.location.href = data.url; // off to Google's consent screen
+        } else {
+          connectBtn.textContent = data.error || 'Not available yet';
+        }
+      } catch {
+        connectBtn.disabled = false;
+        connectBtn.textContent = '📅 Connect Google Calendar';
+      }
+    });
+  }
+
+  const disconnectBtn = document.getElementById('googleDisconnect');
+  if (disconnectBtn) {
+    disconnectBtn.addEventListener('click', async () => {
+      disconnectBtn.disabled = true;
+      await authedFetch('/api/google/disconnect', { method: 'POST' });
+      refreshAllPanels();
+    });
+  }
 }
 
 function buildCard(item, type) {

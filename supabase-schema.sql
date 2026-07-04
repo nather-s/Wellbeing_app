@@ -39,6 +39,16 @@ create table if not exists public.profiles (
   updated_at  timestamptz not null default now()
 );
 
+-- Per-user Google Calendar OAuth tokens. Only the server (service key) ever touches this.
+create table if not exists public.google_accounts (
+  user_id       uuid primary key references auth.users(id) on delete cascade,
+  access_token  text not null,
+  refresh_token text,
+  expires_at    timestamptz,
+  updated_at    timestamptz not null default now()
+);
+alter table public.google_accounts enable row level security;
+
 -- Speed up the per-user lookups the app does constantly.
 create index if not exists tasks_user_idx  on public.tasks(user_id);
 create index if not exists events_user_idx on public.events(user_id);

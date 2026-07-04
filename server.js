@@ -257,6 +257,138 @@ async function requireAuth(req, res, next) {
   }
 }
 
+// --- Google Calendar (per-user OAuth; secrets never touch the browser) ---
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `http://localhost:${process.env.PORT || 3000}/auth/google/callback`;
+const googleConfigured = () => Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+
+// Short-lived nonces tie a Google callback back to the logged-in user without ever
+// putting a Supabase token in a URL. In-memory is fine: the round trip takes seconds.
+const oauthStates = new Map(); // nonce -> { userId, expires }
+function newOauthState(userId) {
+  const nonce = randomUUID();
+  oauthStates.set(nonce, { userId, expires: Date.now() + 10 * 60 * 1000 });
+  return nonce;
+}
+function consumeOauthState(nonce) {
+  const entry = oauthStates.get(nonce);
+  oauthStates.delete(nonce);
+  if (!entry || entry.expires < Date.now()) return null;
+  return entry.userId;
+}
+
+// Returns a live access token for the user, refreshing it if expired. Null = not connected.
+async function getGoogleAccessToken(userId) {
+  const { data: acct, error } = await supabase
+    .from('google_accounts')
+    .select('access_token, refresh_token, expires_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error || !acct) return null;
+
+  const stillValid = acct.expires_at && new Date(acct.expires_at).getTime() > Date.now() + 60000;
+  if (stillValid) return acct.access_token;
+  if (!acct.refresh_token) return null;
+
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+      refresh_token: acct.refresh_token,
+    }),
+  });
+  if (!resp.ok) {
+    console.warn('Google token refresh failed:', await resp.text());
+    return null;
+  }
+  const tok = await resp.json();
+  await supabase.from('google_accounts').upsert({
+    user_id: userId,
+    access_token: tok.access_token,
+    refresh_token: acct.refresh_token,
+    expires_at: new Date(Date.now() + (tok.expires_in || 3600) * 1000).toISOString(),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id' });
+  return tok.access_token;
+}
+
+// Push items to the user's primary Google Calendar. Never throws upstream — calendar
+// problems must NEVER break the core capture flow.
+async function pushToGoogleCalendar(userId, items) {
+  if (!googleConfigured() || !items.length) return 0;
+  const token = await getGoogleAccessToken(userId);
+  if (!token) return 0;
+  let synced = 0;
+  for (const item of items) {
+    try {
+      const startMs = new Date(item.startIso).getTime();
+      const endMs = startMs + (item.minutes || 60) * 60000;
+      const resp = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          summary: item.title,
+          description: 'Added by Loop',
+          start: { dateTime: new Date(startMs).toISOString() },
+          end: { dateTime: new Date(endMs).toISOString() },
+        }),
+      });
+      if (resp.ok) synced++;
+      else console.warn('Calendar insert failed:', resp.status, (await resp.text()).slice(0, 200));
+    } catch (err) {
+      console.warn('Calendar insert error:', err.message);
+    }
+  }
+  return synced;
+}
+
+// Google sends the user's browser here after they approve access. Not under /api
+// because it's a plain browser navigation — the nonce in `state` identifies the user.
+app.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { code, state, error } = req.query;
+    if (error) return res.redirect('/?google=error');
+    const userId = consumeOauthState(state);
+    if (!userId || !code) return res.redirect('/?google=error');
+
+    const resp = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: GOOGLE_REDIRECT_URI,
+      }),
+    });
+    if (!resp.ok) {
+      console.error('Google code exchange failed:', await resp.text());
+      return res.redirect('/?google=error');
+    }
+    const tok = await resp.json();
+    const { error: upErr } = await supabase.from('google_accounts').upsert({
+      user_id: userId,
+      access_token: tok.access_token,
+      refresh_token: tok.refresh_token || null,
+      expires_at: new Date(Date.now() + (tok.expires_in || 3600) * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' });
+    if (upErr) {
+      console.error('Storing Google tokens failed:', upErr.message);
+      return res.redirect('/?google=error');
+    }
+    res.redirect('/?google=connected');
+  } catch (err) {
+    console.error('Google callback error:', err);
+    res.redirect('/?google=error');
+  }
+});
+
 // Public config: gives the browser the values it needs to run the LOGIN widget only.
 // The anon key is designed to be public; the powerful service key never leaves the server.
 app.get('/api/config', (req, res) => {
@@ -371,6 +503,20 @@ Voice note transcript:
       if (error) throw new Error(error.message);
     }
 
+    // Sync to Google Calendar if connected: real events AND the auto-planned study
+    // blocks (a midterm mention puts the study plan on their actual calendar).
+    // Fully fenced — a calendar failure never breaks capture.
+    let googleSynced = 0;
+    try {
+      const calendarItems = [
+        ...newEvents.filter((e) => e.start).map((e) => ({ title: e.title, startIso: e.start, minutes: e.duration_minutes || 60 })),
+        ...newTasks.filter((t) => t.due && t.title.startsWith('Study: ')).map((t) => ({ title: t.title, startIso: t.due, minutes: 60 })),
+      ];
+      googleSynced = await pushToGoogleCalendar(userId, calendarItems);
+    } catch (err) {
+      console.warn('Google Calendar sync skipped:', err.message);
+    }
+
     res.json({
       transcript,
       // "parsed" keeps the shape the frontend expects, with dates already resolved by chrono.
@@ -381,6 +527,7 @@ Voice note transcript:
         mood_signal: parsed.mood_signal || null,
         coach_line: typeof parsed.coach_line === 'string' ? parsed.coach_line : null,
       },
+      google_synced: googleSynced,
       profile: profileSummary,
     });
   } catch (err) {
@@ -414,6 +561,39 @@ app.get('/api/profile', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Google Calendar: hand the browser a one-time auth URL tied to this user.
+app.get('/api/google/auth-url', (req, res) => {
+  if (!googleConfigured()) {
+    return res.status(503).json({ error: 'Google Calendar is not configured on the server yet.' });
+  }
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: 'code',
+    scope: 'https://www.googleapis.com/auth/calendar.events',
+    access_type: 'offline', // required to get a refresh token (long-term access)
+    prompt: 'consent', // guarantees the refresh token is actually issued
+    state: newOauthState(req.userId),
+  });
+  res.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
+});
+
+app.get('/api/google/status', async (req, res) => {
+  if (!googleConfigured()) return res.json({ configured: false, connected: false });
+  const { data } = await supabase
+    .from('google_accounts')
+    .select('user_id')
+    .eq('user_id', req.userId)
+    .maybeSingle();
+  res.json({ configured: true, connected: !!data });
+});
+
+app.post('/api/google/disconnect', async (req, res) => {
+  const { error } = await supabase.from('google_accounts').delete().eq('user_id', req.userId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // One-question onboarding: morning person or night owl. Everything time-related
