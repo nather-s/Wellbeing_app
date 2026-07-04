@@ -14,6 +14,13 @@
 
 * { box-sizing: border-box; }
 
+/* THE rule that ends a whole class of bugs: any element with the hidden attribute is
+   GONE, no matter what display value other CSS gives it. Author CSS (like our
+   .login-screen { display:flex }) silently beats the browser's built-in [hidden]
+   rule — this beats it back. Broke the tabs on day one, then broke the login
+   screen the same way: login succeeded but the screen never visually left. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);

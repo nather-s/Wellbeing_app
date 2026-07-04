@@ -15,7 +15,9 @@
       "Bash(rm -f get-otp-code.mjs)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(rm -f resend-latest-code.mjs)"
+      "Bash(rm -f resend-latest-code.mjs)",
+      "Bash(curl -s \"https://wellbeing-app-s2qf.onrender.com/?cb=$\\(date +%s\\)\")",
+      "Bash(curl -s -o /dev/null -w \"supabase.js on live: HTTP %{http_code}, %{size_download} bytes\\\\n\" \"https://wellbeing-app-s2qf.onrender.com/supabase.js\")"
     ]
   }
 }
