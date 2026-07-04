@@ -39,26 +39,33 @@ app.use(express.static(path.join(__dirname, 'public'), {
   },
 }));
 
-const EXTRACT_SYSTEM_PROMPT = `You are the extraction engine behind a voice-first personal organizer used by all kinds of people (students, professionals, parents, freelancers) — not a niche tool.
+const EXTRACT_SYSTEM_PROMPT = `You are Loop, the brain-dump engine for overwhelmed students. They talk fast, mix school and life in one breath, and often feel behind. Your job: turn a chaotic spoken or typed dump into an organized plan, with zero judgment.
 
-Given a raw spoken-language transcript, pull out anything actionable or worth remembering. Return ONLY valid JSON (no prose, no markdown fences) matching exactly this shape:
+Return ONLY valid JSON (no prose, no markdown fences) matching exactly this shape:
 
 {
-  "tasks": [{"title": string, "due_phrase": string|null, "priority": "low"|"medium"|"high"}],
-  "events": [{"title": string, "start_phrase": string|null, "duration_minutes": number|null}],
+  "tasks": [{"title": string, "due_phrase": string|null, "priority": "low"|"medium"|"high", "bucket": "deep_work"|"admin"|"survival"}],
+  "events": [{"title": string, "start_phrase": string|null, "duration_minutes": number|null, "is_exam": boolean}],
   "notes": [string],
   "mood_signal": string|null,
+  "coach_line": string|null,
   "profile_update": string|null
 }
 
 Rules:
-- "due_phrase" / "start_phrase": copy the EXACT time words the person said, verbatim (e.g. "tomorrow at 7am", "next Friday evening", "in two hours"). Do NOT convert to a date yourself — just quote the phrase. If no time was mentioned, use null.
-- "tasks" are things to do. "events" are things at a specific time. "notes" are anything reflective, emotional, or worth remembering that isn't a task or event.
-- "profile_update": one short sentence capturing something durable and specific you learned about how this person thinks, works, trains, or likes to be reminded — never a summary of what they just said. Return null if nothing new was learned.
-- If a category is empty, return an empty array.
-- Never invent details that weren't said or clearly implied.`;
+- "due_phrase" / "start_phrase": copy the EXACT time words heard, verbatim (e.g. "tomorrow at 7am", "next Friday", "before section"). NEVER compute dates yourself — just quote the phrase. null if no time was mentioned.
+- "bucket" triages each task:
+  - "deep_work" = focused brain time: studying, essays, problem sets, projects, coding, reading.
+  - "admin" = quick logistics: emailing TAs/professors, forms, sign-ups, scheduling, submitting things.
+  - "survival" = life upkeep: laundry, groceries, gym, meds, calling home, sleep.
+- Speak student: TA, office hours, syllabus, Canvas, pset/problem set, lab, section, recitation, midterm, finals week, R.A., credit hours. "My prof moved the essay to Friday" means a deadline changed — capture the Friday deadline.
+- "is_exam": true for midterms, finals, quizzes, tests — anything they will need to study for beforehand.
+- "notes": feelings, worries, and thoughts worth keeping that aren't tasks or events. "mood_signal": their emotional state if detectable.
+- "coach_line": ONE short warm sentence of relief (max 15 words) acknowledging what they just offloaded. Casual, human, never corporate. Examples: "That's a lot — it's all captured now." / "Okay. Your week has a shape again." Return null if the dump was purely neutral.
+- "profile_update": one durable, specific fact about how this student works, thinks, or likes reminders — never a restatement of what they said. null if nothing new.
+- Empty arrays where nothing fits. Never invent things they didn't say or clearly imply.`;
 
-const CONSOLIDATE_SYSTEM_PROMPT = `Condense the following list of observations about one person into a single short paragraph (max 80 words) describing how they think, work, and like to be reminded or supported. Be specific and concrete, not generic. Return only the paragraph, nothing else.`;
+const CONSOLIDATE_SYSTEM_PROMPT = `Condense the following observations about one student into a single short paragraph (max 80 words) describing how they work, when their brain is at its best, what stresses them, and how they like to be reminded or supported. Be specific and concrete, not generic. Return only the paragraph, nothing else.`;
 
 // Deterministically resolve a natural-language time phrase ("tomorrow at 7am") into an ISO
 // string. Date math is done here by chrono-node — never by the LLM, which is unreliable at it.
@@ -161,12 +168,57 @@ function mapRow(row) {
 async function getProfile(userId) {
   const { data, error } = await supabase
     .from('profiles')
-    .select('summary, log')
+    .select('summary, log, energy')
     .eq('user_id', userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return { summary: data?.summary || '', log: Array.isArray(data?.log) ? data.log : [] };
+  return {
+    summary: data?.summary || '',
+    log: Array.isArray(data?.log) ? data.log : [],
+    energy: data?.energy || null, // 'morning' | 'night' | null
+  };
 }
+
+// When a student mentions an exam, don't just log it — plan for it. Deterministic study
+// blocks at 5/3/1 days before the exam, timed to when THEIR brain works (energy pref).
+// Pure date math, zero model calls, zero cost.
+function studyBlocksForExam(examTitle, startIso, tzOffsetMinutes, energy) {
+  const hourLocal = energy === 'morning' ? 8 : energy === 'night' ? 19 : 17;
+  const offMs = (Number.isFinite(tzOffsetMinutes) ? tzOffsetMinutes : 0) * 60000;
+  const startMs = new Date(startIso).getTime();
+  const nowMs = Date.now();
+  const blocks = [];
+  for (const daysBefore of [5, 3, 1]) {
+    // Anchor to the user's LOCAL wall clock, then convert back to a UTC instant.
+    const local = new Date(startMs - daysBefore * 86400000 + offMs);
+    local.setUTCHours(hourLocal, 0, 0, 0);
+    const dueMs = local.getTime() - offMs;
+    if (dueMs > nowMs && dueMs < startMs) {
+      blocks.push({
+        title: `Study: ${examTitle}`,
+        due: new Date(dueMs).toISOString(),
+        due_phrase: null,
+        priority: daysBefore === 1 ? 'high' : 'medium',
+        bucket: 'deep_work',
+      });
+    }
+  }
+  return blocks;
+}
+
+const CATCHUP_SYSTEM_PROMPT = `You are Loop's catch-up planner for an overwhelmed student. They fell behind. Your job: reflow their overdue tasks into a realistic new plan, with ZERO guilt.
+
+You get the current date/time, their energy pattern, and a numbered task list.
+
+Return ONLY valid JSON (no prose, no markdown fences):
+{"reschedules": [{"n": number, "due_phrase": string}], "message": string}
+
+Rules:
+- "due_phrase": a natural time phrase relative to NOW ("today at 7pm", "tomorrow morning", "Saturday afternoon"). Never a time in the past.
+- Spread the load realistically: at most 2-3 deep_work items per day; admin items can batch together; survival fits into gaps. Deep work goes in the morning for a morning person, evening for a night owl.
+- Nearest real deadlines and high priority first. Pushing low-priority items several days is fine and healthy.
+- Include EVERY task number exactly once in "reschedules".
+- "message": 1-2 warm sentences, guilt-free. ("Rough stretch — happens to everyone. Here's a week that actually fits.") Never lecture.`;
 
 async function consolidateProfile(profile) {
   // Only spend a real model call every 5 new observations; otherwise just append cheaply.
@@ -228,6 +280,7 @@ app.post('/api/process', async (req, res) => {
 
     const userContent = `Current date/time (UTC): ${now}
 Known profile so far: ${profile.summary || '(none yet)'}
+Energy pattern: ${profile.energy === 'morning' ? 'morning person — brain works best early' : profile.energy === 'night' ? 'night owl — brain works best late' : '(not set yet)'}
 
 Voice note transcript:
 """${transcript}"""`;
@@ -251,26 +304,43 @@ Voice note transcript:
     }
 
     // Build rows to insert, resolving dates deterministically via chrono (never the model).
+    const VALID_BUCKETS = ['deep_work', 'admin', 'survival'];
     const taskRows = (parsed.tasks || []).map((t) => ({
       user_id: userId,
       title: t.title,
       due: resolveDate(t.due_phrase, tzOffset) || t.due || null,
       due_phrase: t.due_phrase || null,
       priority: t.priority || 'medium',
+      bucket: VALID_BUCKETS.includes(t.bucket) ? t.bucket : 'admin',
       done: false,
     }));
-    const eventRows = (parsed.events || []).map((e) => ({
-      user_id: userId,
-      title: e.title,
-      start: resolveDate(e.start_phrase, tzOffset) || e.start || null,
-      start_phrase: e.start_phrase || null,
-      duration_minutes: e.duration_minutes ?? null,
+    // is_exam is used server-side to plan study blocks — it isn't stored on the event.
+    const parsedEvents = (parsed.events || []).map((e) => ({
+      row: {
+        user_id: userId,
+        title: e.title,
+        start: resolveDate(e.start_phrase, tzOffset) || e.start || null,
+        start_phrase: e.start_phrase || null,
+        duration_minutes: e.duration_minutes ?? null,
+      },
+      isExam: e.is_exam === true,
     }));
     const noteRows = (parsed.notes || []).map((n) => ({
       user_id: userId,
       text: n,
       mood: parsed.mood_signal || null,
     }));
+
+    // Exam radar: every exam with a known future date gets study blocks auto-planned,
+    // timed to the student's energy pattern. This is the "midterm means a study plan,
+    // not just a calendar entry" behavior.
+    for (const { row, isExam } of parsedEvents) {
+      if (isExam && row.start) {
+        taskRows.push(
+          ...studyBlocksForExam(row.title, row.start, tzOffset, profile.energy).map((b) => ({ user_id: userId, done: false, ...b }))
+        );
+      }
+    }
 
     let newTasks = [];
     let newEvents = [];
@@ -280,8 +350,8 @@ Voice note transcript:
       if (error) throw new Error(error.message);
       newTasks = data.map(mapRow);
     }
-    if (eventRows.length) {
-      const { data, error } = await supabase.from('events').insert(eventRows).select();
+    if (parsedEvents.length) {
+      const { data, error } = await supabase.from('events').insert(parsedEvents.map((e) => e.row)).select();
       if (error) throw new Error(error.message);
       newEvents = data.map(mapRow);
     }
@@ -309,6 +379,7 @@ Voice note transcript:
         events: newEvents,
         notes: newNotes.map((n) => n.text),
         mood_signal: parsed.mood_signal || null,
+        coach_line: typeof parsed.coach_line === 'string' ? parsed.coach_line : null,
       },
       profile: profileSummary,
     });
@@ -342,6 +413,92 @@ app.get('/api/profile', async (req, res) => {
     res.json(profile);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// One-question onboarding: morning person or night owl. Everything time-related
+// (study blocks, catch-up plans) keys off this.
+app.post('/api/profile/energy', async (req, res) => {
+  const { energy } = req.body;
+  if (!['morning', 'night'].includes(energy)) {
+    return res.status(400).json({ error: 'energy must be "morning" or "night"' });
+  }
+  const { error } = await supabase
+    .from('profiles')
+    .upsert({ user_id: req.userId, energy, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, energy });
+});
+
+// The "Fix my week" button. Takes every overdue task and asks the model for a humane
+// reflow — new times as natural phrases, resolved by chrono (never model date math),
+// plus a guilt-free message. The model sees short numbers, not raw ids, so a small
+// free model can't mangle UUIDs.
+app.post('/api/catchup', async (req, res) => {
+  try {
+    const tzOffset = Number.isFinite(req.body?.tz_offset_minutes) ? req.body.tz_offset_minutes : null;
+    const nowIso = new Date().toISOString();
+
+    const { data: overdue, error: qErr } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('user_id', req.userId)
+      .eq('done', false)
+      .not('due', 'is', null)
+      .lt('due', nowIso)
+      .order('due');
+    if (qErr) return res.status(500).json({ error: qErr.message });
+    if (!overdue.length) return res.json({ moved: 0, message: "Nothing's overdue — you're more on top of things than you think." });
+
+    const profile = await getProfile(req.userId);
+    const list = overdue
+      .map((t, i) => `${i + 1}. [${t.bucket || 'task'}] ${t.title} (priority: ${t.priority}, was due: ${t.due})`)
+      .join('\n');
+    const userContent = `Current date/time (UTC): ${nowIso}
+Energy pattern: ${profile.energy === 'morning' ? 'morning person' : profile.energy === 'night' ? 'night owl' : 'unknown'}
+
+Overdue tasks:
+${list}`;
+
+    let plan;
+    try {
+      plan = await callWithChain({
+        models: EXTRACT_MODEL_CHAIN,
+        system: CATCHUP_SYSTEM_PROMPT,
+        userContent,
+        maxTokens: 1024,
+        jsonMode: true,
+        validate: parseExtractionJson,
+      });
+    } catch (err) {
+      if (err instanceof RateLimitError) {
+        return res.status(429).json({ error: 'Loop is a little busy — try Fix my week again in a minute.' });
+      }
+      return res.status(502).json({ error: "Couldn't rework the plan just now — try again shortly." });
+    }
+
+    let moved = 0;
+    for (const r of Array.isArray(plan.reschedules) ? plan.reschedules : []) {
+      const task = overdue[Number(r.n) - 1];
+      const newDue = resolveDate(r.due_phrase, tzOffset);
+      if (!task || !newDue || new Date(newDue) <= new Date()) continue; // never reschedule into the past
+      const { error } = await supabase
+        .from('tasks')
+        .update({ due: newDue, due_phrase: r.due_phrase || null })
+        .eq('id', task.id)
+        .eq('user_id', req.userId);
+      if (!error) moved++;
+    }
+
+    res.json({
+      moved,
+      message: typeof plan.message === 'string' && plan.message
+        ? plan.message
+        : `Rescheduled ${moved} thing${moved === 1 ? '' : 's'} into the days ahead. Clean slate.`,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error', detail: err.message });
   }
 });
 

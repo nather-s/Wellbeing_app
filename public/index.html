@@ -19,8 +19,8 @@
       <span class="brand-mark"></span>
       <span class="brand-name">Loop</span>
     </div>
-    <h1 class="login-title">Speak it. Loop sorts it.</h1>
-    <p class="login-sub">Enter your email and we'll send you a code — no password needed.</p>
+    <h1 class="login-title">Dump the panic.<br>Get a plan.</h1>
+    <p class="login-sub">Say everything on your mind — the midterm, the TA email, the laundry. Loop turns the chaos into an organized week. Email in, code back, no password.</p>
     <form id="loginForm" class="login-form" autocomplete="on">
       <input id="loginEmail" type="email" placeholder="you@example.com" required aria-label="Email address" />
       <button type="submit" id="loginSubmit">Send me a code</button>
@@ -30,7 +30,7 @@
       <button type="submit" id="codeSubmit">Verify &amp; log in</button>
     </form>
     <p class="login-status" id="loginStatus"></p>
-    <p class="login-version">build 2026-07-04.2</p>
+    <p class="login-version">build 2026-07-04.3</p>
   </div>
 </div>
 
@@ -55,12 +55,21 @@
         <svg viewBox="0 0 24 24" class="mic-icon"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="12" y1="18" x2="12" y2="22" stroke="currentColor" stroke-width="1.6"/></svg>
         <span class="pulse-ring"></span>
       </button>
-      <p class="capture-hint" id="captureHint">Tap to say what's on your mind — a task, a plan, how training's going, anything.</p>
+      <p class="capture-hint" id="captureHint">Tap and dump it all — the midterm, the email you owe your TA, the laundry. Loop sorts it.</p>
       <p class="live-transcript" id="liveTranscript"></p>
       <form id="textForm" class="text-capture" autocomplete="off">
-        <input id="textInput" type="text" placeholder="Or type it instead…" aria-label="Type a note" />
+        <input id="textInput" type="text" placeholder="Or type the chaos here…" aria-label="Type a note" />
         <button type="submit" id="textSubmit">Add</button>
       </form>
+    </section>
+
+    <!-- One-question onboarding: shown until the student picks when their brain works -->
+    <section class="energy-bar" id="energyBar" hidden>
+      <span>When does your brain actually work?</span>
+      <div class="energy-choices">
+        <button id="energyMorning" type="button">🌅 Mornings</button>
+        <button id="energyNight" type="button">🌙 Late night</button>
+      </div>
     </section>
 
     <section class="results" id="resultsPanel" hidden>
@@ -70,9 +79,9 @@
 
     <nav class="tabs">
       <button class="tab active" data-tab="today">Today</button>
-      <button class="tab" data-tab="tasks">Tasks</button>
+      <button class="tab" data-tab="tasks">To-dos</button>
       <button class="tab" data-tab="events">Calendar</button>
-      <button class="tab" data-tab="notes">Notes</button>
+      <button class="tab" data-tab="notes">Mind</button>
       <button class="tab" data-tab="profile">About you</button>
     </nav>
 

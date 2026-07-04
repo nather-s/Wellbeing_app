@@ -17,7 +17,8 @@
       "Bash(git commit -m ' *)",
       "Bash(rm -f resend-latest-code.mjs)",
       "Bash(curl -s \"https://wellbeing-app-s2qf.onrender.com/?cb=$\\(date +%s\\)\")",
-      "Bash(curl -s -o /dev/null -w \"supabase.js on live: HTTP %{http_code}, %{size_download} bytes\\\\n\" \"https://wellbeing-app-s2qf.onrender.com/supabase.js\")"
+      "Bash(curl -s -o /dev/null -w \"supabase.js on live: HTTP %{http_code}, %{size_download} bytes\\\\n\" \"https://wellbeing-app-s2qf.onrender.com/supabase.js\")",
+      "Bash(rm -f get-otp-code.mjs plant-overdue.mjs debug-overdue-query.mjs cleanup-test-data.mjs)"
     ]
   }
 }

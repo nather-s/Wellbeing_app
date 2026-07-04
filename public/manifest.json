@@ -1,7 +1,7 @@
 {
-  "name": "Loop — Voice Life OS",
+  "name": "Loop — Dump the panic. Get a plan.",
   "short_name": "Loop",
-  "description": "Speak it, and Loop turns it into tasks, events, and reminders that adapt to you.",
+  "description": "Dump your academic panic by voice. Loop turns the chaos into an organized week — tasks, deadlines, study plans.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#12141C",

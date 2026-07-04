@@ -7,6 +7,9 @@ const profilePill = document.getElementById('profilePill');
 const textForm = document.getElementById('textForm');
 const textInput = document.getElementById('textInput');
 const textSubmit = document.getElementById('textSubmit');
+const energyBar = document.getElementById('energyBar');
+const energyMorning = document.getElementById('energyMorning');
+const energyNight = document.getElementById('energyNight');
 
 // Auth-related elements
 const loginScreen = document.getElementById('loginScreen');
@@ -234,7 +237,7 @@ function stopListening() {
     captureHint.textContent = 'Working on it...';
     processTranscript(transcript);
   } else {
-    captureHint.textContent = 'Tap to say what\'s on your mind — a task, a plan, how training\'s going, anything.';
+    captureHint.textContent = 'Tap and dump it all — the midterm, the email you owe your TA, the laundry. Loop sorts it.';
   }
 }
 
@@ -259,7 +262,9 @@ async function processTranscript(transcript) {
     showResults(data.parsed);
     updateProfilePill(data.profile);
     refreshAllPanels();
-    captureHint.textContent = 'Got it. Capture another whenever you like.';
+    // The coach line is the "relief" moment — one warm sentence from the AI about
+    // what they just offloaded, instead of a generic confirmation.
+    captureHint.textContent = data.parsed.coach_line || 'Captured. It\'s out of your head now.';
   } catch (err) {
     captureHint.textContent = 'Could not reach the server. Is it running?';
     console.error(err);
@@ -274,9 +279,33 @@ textForm.addEventListener('submit', (e) => {
   const text = textInput.value.trim();
   if (!text) return;
   textInput.value = '';
-  captureHint.textContent = 'Working on it...';
+  captureHint.textContent = 'Sorting the chaos…';
   processTranscript(text);
 });
+
+// ---------- Energy onboarding (one question, big payoff) ----------
+async function setEnergy(energy) {
+  energyMorning.disabled = true;
+  energyNight.disabled = true;
+  try {
+    const res = await authedFetch('/api/profile/energy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ energy }),
+    });
+    if (res.ok) {
+      energyBar.hidden = true;
+      captureHint.textContent = energy === 'morning'
+        ? 'Noted — deep work goes in your mornings now. 🌅'
+        : 'Noted — deep work goes in your late nights now. 🌙';
+    }
+  } finally {
+    energyMorning.disabled = false;
+    energyNight.disabled = false;
+  }
+}
+energyMorning.addEventListener('click', () => setEnergy('morning'));
+energyNight.addEventListener('click', () => setEnergy('night'));
 
 function showResults(parsed) {
   resultsList.innerHTML = '';
@@ -331,28 +360,88 @@ async function refreshAllPanels() {
   renderProfile(profile);
   renderToday(tasks, events);
   updateProfilePill(profile.summary);
+  // Show the one-question onboarding until they've answered it.
+  energyBar.hidden = !!profile.energy;
+}
+
+const BUCKET_LABELS = {
+  deep_work: '🧠 Deep work',
+  admin: '📋 Quick wins',
+  survival: '🧺 Life stuff',
+};
+
+function sectionLabel(text) {
+  const el = document.createElement('div');
+  el.className = 'section-label';
+  el.textContent = text;
+  return el;
 }
 
 function renderToday(tasks, events) {
   const panel = document.getElementById('panel-today');
-  const todayStr = new Date().toDateString();
+  const now = new Date();
+  const todayStr = now.toDateString();
+
+  const overdue = tasks.filter((t) => !t.done && t.due && new Date(t.due) < now && new Date(t.due).toDateString() !== todayStr);
   const todaysTasks = tasks.filter((t) => !t.done && (!t.due || new Date(t.due).toDateString() === todayStr));
-  const todaysEvents = events.filter((e) => !e.start || new Date(e.start).toDateString() === todayStr);
+  const todaysEvents = events.filter((e) => e.start && new Date(e.start).toDateString() === todayStr);
 
   panel.innerHTML = '';
-  if (todaysTasks.length === 0 && todaysEvents.length === 0) {
-    panel.innerHTML = '<div class="empty-state">Nothing captured yet. Tap the mic above to get started.</div>';
+
+  if (!overdue.length && !todaysTasks.length && !todaysEvents.length) {
+    panel.innerHTML = '<div class="empty-state">Nothing on the radar. Brain-dump above whenever the pressure builds.</div>';
     return;
   }
-  todaysEvents.forEach((e) => panel.appendChild(buildCard(e, 'event')));
-  todaysTasks.forEach((t) => panel.appendChild(buildCard(t, 'task')));
+
+  // Overdue: a calm catch-up section with the one-tap reflow — never a wall of red.
+  if (overdue.length) {
+    panel.appendChild(sectionLabel(`😮‍💨 Slipped past — no stress (${overdue.length})`));
+    const fixBtn = document.createElement('button');
+    fixBtn.className = 'catchup-btn';
+    fixBtn.textContent = '✨ Fix my week';
+    fixBtn.addEventListener('click', async () => {
+      fixBtn.disabled = true;
+      fixBtn.textContent = 'Reworking your week…';
+      try {
+        const res = await authedFetch('/api/catchup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tz_offset_minutes: -new Date().getTimezoneOffset() }),
+        });
+        const data = await res.json();
+        captureHint.textContent = res.ok ? data.message : (data.error || 'Could not rework the plan — try again.');
+        if (res.ok) refreshAllPanels();
+      } catch {
+        captureHint.textContent = 'Could not reach the server — try again.';
+      } finally {
+        fixBtn.disabled = false;
+        fixBtn.textContent = '✨ Fix my week';
+      }
+    });
+    panel.appendChild(fixBtn);
+    overdue.forEach((t) => panel.appendChild(buildCard(t, 'task')));
+  }
+
+  if (todaysEvents.length) {
+    panel.appendChild(sectionLabel('📅 Today'));
+    todaysEvents.forEach((e) => panel.appendChild(buildCard(e, 'event')));
+  }
+
+  // Triage today's tasks into the three student buckets.
+  for (const bucket of ['deep_work', 'admin', 'survival']) {
+    const inBucket = todaysTasks.filter((t) => (t.bucket || 'admin') === bucket);
+    if (inBucket.length) {
+      panel.appendChild(sectionLabel(BUCKET_LABELS[bucket]));
+      inBucket.forEach((t) => panel.appendChild(buildCard(t, 'task')));
+    }
+  }
 }
 
 function renderTasks(tasks) {
   const panel = document.getElementById('panel-tasks');
   panel.innerHTML = '';
   if (tasks.length === 0) {
-    panel.innerHTML = '<div class="empty-state">No tasks yet.</div>';
+    panel.innerHTML = '<div class="empty-state">No to-dos yet. Dump your day above and watch them sort themselves.</div>';
     return;
   }
   tasks
@@ -378,7 +467,7 @@ function renderNotes(notes) {
   const panel = document.getElementById('panel-notes');
   panel.innerHTML = '';
   if (notes.length === 0) {
-    panel.innerHTML = '<div class="empty-state">No notes yet.</div>';
+    panel.innerHTML = '<div class="empty-state">Nothing on your mind yet — feelings and worries you dump land here.</div>';
     return;
   }
   notes
@@ -397,7 +486,7 @@ function renderProfile(profile) {
   panel.innerHTML = `
     <div class="profile-card">
       <h3>What Loop has learned</h3>
-      ${profile.summary ? `<p>${escapeHtml(profile.summary)}</p>` : '<p class="profile-empty">Keep capturing voice notes — Loop builds this picture over time and uses it to tune how it phrases tasks and reminders for you.</p>'}
+      ${profile.summary ? `<p>${escapeHtml(profile.summary)}</p>` : '<p class="profile-empty">Keep dumping your days — Loop learns how you study, when your brain works, and what stresses you, then plans around it.</p>'}
     </div>
   `;
 }
@@ -407,6 +496,8 @@ function buildCard(item, type) {
   card.className = 'card';
 
   if (type === 'task') {
+    const bucket = item.bucket || null;
+    const bucketBadge = bucket ? `<span class="bucket-badge bucket-${bucket}">${(BUCKET_LABELS[bucket] || bucket).split(' ')[0]}</span>` : '';
     card.innerHTML = `
       <button class="card-checkbox ${item.done ? 'done' : ''}" data-id="${item.id}" data-kind="task"></button>
       <div class="card-body">
@@ -414,6 +505,7 @@ function buildCard(item, type) {
         <div class="card-meta">
           ${item.due ? `<span>${formatDate(item.due)}</span>` : ''}
           <span class="priority-${item.priority}">${item.priority}</span>
+          ${bucketBadge}
         </div>
       </div>
       <button class="card-delete" data-id="${item.id}" data-kind="task">×</button>

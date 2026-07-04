@@ -8,6 +8,7 @@ create table if not exists public.tasks (
   due         timestamptz,
   due_phrase  text,
   priority    text not null default 'medium',
+  bucket      text, -- 'deep_work' | 'admin' | 'survival' (student triage)
   done        boolean not null default false,
   created_at  timestamptz not null default now()
 );
@@ -34,6 +35,7 @@ create table if not exists public.profiles (
   user_id     uuid primary key references auth.users(id) on delete cascade,
   summary     text not null default '',
   log         jsonb not null default '[]'::jsonb,
+  energy      text, -- 'morning' | 'night' — when this student's brain works best
   updated_at  timestamptz not null default now()
 );
 
