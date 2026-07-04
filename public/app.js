@@ -10,6 +10,92 @@ const textSubmit = document.getElementById('textSubmit');
 const energyBar = document.getElementById('energyBar');
 const energyMorning = document.getElementById('energyMorning');
 const energyNight = document.getElementById('energyNight');
+const streakPill = document.getElementById('streakPill');
+
+// ---------- Juice: sounds, haptics, confetti, streaks ----------
+// All synthesized with the Web Audio API — zero audio files, zero network requests,
+// and everything is fenced so a decoration failing can never break the app.
+let audioCtx = null;
+function playSound(kind) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const notes = {
+      start: [[523.25, 0, 0.1], [783.99, 0.09, 0.14]],       // rising: "I'm listening"
+      stop: [[783.99, 0, 0.09], [523.25, 0.08, 0.12]],       // falling: "got it, working"
+      success: [[523.25, 0, 0.09], [659.25, 0.08, 0.09], [783.99, 0.16, 0.18]], // little arpeggio
+      pop: [[880, 0, 0.07]],                                  // tiny tick for small wins
+    }[kind] || [];
+    for (const [freq, delay, dur] of notes) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const t = audioCtx.currentTime + delay;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.14, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.05);
+    }
+  } catch { /* sound is decoration, never load-bearing */ }
+}
+
+function buzz(pattern) {
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch { /* same */ }
+}
+
+const CONFETTI_COLORS = ['#7C3AED', '#EC4899', '#F59E0B', '#22D3EE', '#ffffff'];
+function confettiBurst() {
+  for (let i = 0; i < 14; i++) {
+    const p = document.createElement('span');
+    p.className = 'confetti';
+    const angle = (Math.PI * 2 * i) / 14 + Math.random() * 0.5;
+    const dist = 70 + Math.random() * 90;
+    p.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
+    p.style.setProperty('--dy', `${Math.sin(angle) * dist}px`);
+    p.style.setProperty('--rot', `${Math.random() * 540 - 270}deg`);
+    p.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+    micButton.appendChild(p);
+    setTimeout(() => p.remove(), 950);
+  }
+  micButton.classList.add('celebrate');
+  setTimeout(() => micButton.classList.remove('celebrate'), 750);
+}
+
+// Streak = consecutive days with at least one capture. Missing today doesn't kill it
+// (the day isn't over) — but a gap before that does.
+function computeStreak(itemLists) {
+  const days = new Set();
+  for (const list of itemLists) {
+    for (const item of list) {
+      if (item && item.createdAt) days.add(new Date(item.createdAt).toDateString());
+    }
+  }
+  let streak = 0;
+  const d = new Date();
+  if (!days.has(d.toDateString())) d.setDate(d.getDate() - 1);
+  while (days.has(d.toDateString())) {
+    streak++;
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+
+function updateStreak(itemLists) {
+  const streak = computeStreak(itemLists);
+  streakPill.hidden = streak < 1;
+  streakPill.textContent = `🔥 ${streak}`;
+}
+
+// Cards pop in one after another when a panel refreshes.
+function stagger(panelEl) {
+  panelEl.querySelectorAll('.card').forEach((c, i) => {
+    c.classList.add('pop-in');
+    c.style.animationDelay = `${Math.min(i * 45, 400)}ms`;
+  });
+}
 
 // Auth-related elements
 const loginScreen = document.getElementById('loginScreen');
@@ -233,12 +319,16 @@ function startListening() {
   liveTranscript.textContent = '';
   micButton.classList.add('listening');
   captureHint.textContent = 'Listening — tap again when you\'re done.';
+  playSound('start');
+  buzz(20);
   recognition.start();
 }
 
 function stopListening() {
   recognizing = false;
   micButton.classList.remove('listening');
+  playSound('stop');
+  buzz(15);
   recognition.stop();
   const transcript = liveTranscript.textContent.trim();
   if (transcript) {
@@ -270,8 +360,11 @@ async function processTranscript(transcript) {
     showResults(data.parsed);
     updateProfilePill(data.profile);
     refreshAllPanels();
-    // The coach line is the "relief" moment — one warm sentence from the AI about
-    // what they just offloaded, instead of a generic confirmation.
+    // The dopamine moment: chime + confetti + a warm coach line instead of a
+    // generic confirmation. Offloading stress should FEEL like a small win.
+    playSound('success');
+    buzz([15, 40, 25]);
+    confettiBurst();
     const coach = data.parsed.coach_line || 'Captured. It\'s out of your head now.';
     captureHint.textContent = data.google_synced > 0 ? `${coach} 📅 ${data.google_synced} added to Google Calendar.` : coach;
   } catch (err) {
@@ -304,6 +397,8 @@ async function setEnergy(energy) {
     });
     if (res.ok) {
       energyBar.hidden = true;
+      playSound('success');
+      buzz([10, 30, 10]);
       captureHint.textContent = energy === 'morning'
         ? 'Noted — deep work goes in your mornings now. 🌅'
         : 'Noted — deep work goes in your late nights now. 🌙';
@@ -350,7 +445,11 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
     document.querySelectorAll('.panel').forEach((p) => (p.hidden = true));
     tab.classList.add('active');
-    document.getElementById(`panel-${tab.dataset.tab}`).hidden = false;
+    const panel = document.getElementById(`panel-${tab.dataset.tab}`);
+    panel.hidden = false;
+    stagger(panel);
+    playSound('pop');
+    buzz(8);
   });
 });
 
@@ -370,6 +469,9 @@ async function refreshAllPanels() {
   renderProfile(profile, google);
   renderToday(tasks, events);
   updateProfilePill(profile.summary);
+  updateStreak([tasks, events, notes]);
+  // Animate whichever panel is visible; the others get it on tab switch.
+  document.querySelectorAll('.panel').forEach((p) => { if (!p.hidden) stagger(p); });
   // Show the one-question onboarding until they've answered it.
   energyBar.hidden = !!profile.energy;
 }
@@ -420,7 +522,11 @@ function renderToday(tasks, events) {
         });
         const data = await res.json();
         captureHint.textContent = res.ok ? data.message : (data.error || 'Could not rework the plan — try again.');
-        if (res.ok) refreshAllPanels();
+        if (res.ok) {
+          playSound('success');
+          buzz([15, 40, 25]);
+          refreshAllPanels();
+        }
       } catch {
         captureHint.textContent = 'Could not reach the server — try again.';
       } finally {
@@ -585,6 +691,8 @@ function buildCard(item, type) {
   card.querySelectorAll('[data-kind="task"]').forEach((el) => {
     if (el.classList.contains('card-checkbox')) {
       el.addEventListener('click', async () => {
+        playSound(item.done ? 'pop' : 'success'); // completing feels bigger than un-completing
+        buzz(12);
         await authedFetch(`/api/tasks/${item.id}/toggle`, { method: 'PATCH' });
         refreshAllPanels();
       });
