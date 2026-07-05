@@ -3,8 +3,14 @@ import express from 'express';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import * as chrono from 'chrono-node';
 import { createClient } from '@supabase/supabase-js';
+import {
+  resolveDate,
+  studyBlocksForExam,
+  parseExtractionJson,
+  consolidateTaskEventOverlap,
+  sanitizeProfileText,
+} from './server-utils.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -61,29 +67,13 @@ Rules:
   - "survival" = life upkeep: laundry, groceries, gym, meds, calling home, sleep.
 - Speak student: TA, office hours, syllabus, Canvas, pset/problem set, lab, section, recitation, midterm, finals week, R.A., credit hours. "My prof moved the essay to Friday" means a deadline changed — capture the Friday deadline.
 - "is_exam": true for midterms, finals, quizzes, tests — anything they will need to study for beforehand.
+- One moment in time = ONE entry. If something is just attending or preparing for an event at the same time ("a meeting at 6 for which I have to wake up"), output ONLY the event — never a separate task duplicating it. The calendar entry itself is the reminder.
 - "notes": feelings, worries, and thoughts worth keeping that aren't tasks or events. "mood_signal": their emotional state if detectable.
 - "coach_line": ONE short warm sentence of relief (max 15 words) acknowledging what they just offloaded. Casual, human, never corporate. Examples: "That's a lot — it's all captured now." / "Okay. Your week has a shape again." Return null if the dump was purely neutral.
 - "profile_update": one durable, specific fact about how this student works, thinks, or likes reminders — never a restatement of what they said. null if nothing new.
 - Empty arrays where nothing fits. Never invent things they didn't say or clearly imply.`;
 
 const CONSOLIDATE_SYSTEM_PROMPT = `Condense the following observations about one student into a single short paragraph (max 80 words) describing how they work, when their brain is at its best, what stresses them, and how they like to be reminded or supported. Be specific and concrete, not generic. Return only the paragraph, nothing else.`;
-
-// Deterministically resolve a natural-language time phrase ("tomorrow at 7am") into an ISO
-// string. Date math is done here by chrono-node — never by the LLM, which is unreliable at it.
-// tzOffsetMinutes comes from the user's browser (positive = ahead of UTC, e.g. IST = +330),
-// so "tomorrow at 7am" means 7am in the USER's timezone even though the server runs in UTC.
-function resolveDate(phrase, tzOffsetMinutes) {
-  if (!phrase || typeof phrase !== 'string') return null;
-  try {
-    const ref = Number.isFinite(tzOffsetMinutes)
-      ? { instant: new Date(), timezone: tzOffsetMinutes }
-      : new Date();
-    const d = chrono.parseDate(phrase, ref, { forwardDate: true });
-    return d ? d.toISOString() : null;
-  } catch {
-    return null;
-  }
-}
 
 class RateLimitError extends Error {}
 
@@ -152,15 +142,6 @@ async function callWithChain({ models, system, userContent, maxTokens, jsonMode 
   throw lastError || new Error('All models in chain failed');
 }
 
-function parseExtractionJson(rawText) {
-  const cleaned = rawText.replace(/```json|```/g, '').trim();
-  const parsed = JSON.parse(cleaned); // throws → chain tries the next model
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Model returned JSON that is not an object');
-  }
-  return parsed;
-}
-
 // Rows come back from Postgres with snake_case created_at; the frontend expects createdAt.
 function mapRow(row) {
   return { ...row, createdAt: row.created_at };
@@ -180,33 +161,6 @@ async function getProfile(userId) {
   };
 }
 
-// When a student mentions an exam, don't just log it — plan for it. Deterministic study
-// blocks at 5/3/1 days before the exam, timed to when THEIR brain works (energy pref).
-// Pure date math, zero model calls, zero cost.
-function studyBlocksForExam(examTitle, startIso, tzOffsetMinutes, energy) {
-  const hourLocal = energy === 'morning' ? 8 : energy === 'night' ? 19 : 17;
-  const offMs = (Number.isFinite(tzOffsetMinutes) ? tzOffsetMinutes : 0) * 60000;
-  const startMs = new Date(startIso).getTime();
-  const nowMs = Date.now();
-  const blocks = [];
-  for (const daysBefore of [5, 3, 1]) {
-    // Anchor to the user's LOCAL wall clock, then convert back to a UTC instant.
-    const local = new Date(startMs - daysBefore * 86400000 + offMs);
-    local.setUTCHours(hourLocal, 0, 0, 0);
-    const dueMs = local.getTime() - offMs;
-    if (dueMs > nowMs && dueMs < startMs) {
-      blocks.push({
-        title: `Study: ${examTitle}`,
-        due: new Date(dueMs).toISOString(),
-        due_phrase: null,
-        priority: daysBefore === 1 ? 'high' : 'medium',
-        bucket: 'deep_work',
-      });
-    }
-  }
-  return blocks;
-}
-
 const CATCHUP_SYSTEM_PROMPT = `You are Loop's catch-up planner for an overwhelmed student. They fell behind. Your job: reflow their overdue tasks into a realistic new plan, with ZERO guilt.
 
 You get the current date/time, their energy pattern, and a numbered task list.
@@ -224,7 +178,9 @@ Rules:
 async function consolidateProfile(profile) {
   // Only spend a real model call every 5 new observations; otherwise just append cheaply.
   if (profile.log.length % 5 !== 0) {
-    return [profile.summary, profile.log[profile.log.length - 1].text].filter(Boolean).join(' ');
+    const appended = [profile.summary, profile.log[profile.log.length - 1].text].filter(Boolean).join(' ');
+    // Even the cheap path goes through the sanitizer — the summary renders in the UI.
+    return sanitizeProfileText(appended, 600) || profile.summary;
   }
   try {
     const text = await callWithChain({
@@ -233,7 +189,10 @@ async function consolidateProfile(profile) {
       userContent: profile.log.map((l) => `- ${l.text}`).join('\n'),
       maxTokens: 300,
     });
-    return text || profile.summary;
+    // Free models occasionally echo their instructions ("The user wants a single short
+    // paragraph...") instead of writing the summary. That junk was leaking straight into
+    // the profile pill in the top bar. Reject it and keep the previous good summary.
+    return sanitizeProfileText(text) || profile.summary;
   } catch (err) {
     console.error('Profile consolidation failed, keeping previous summary:', err.message);
     return profile.summary;
@@ -318,12 +277,13 @@ async function getGoogleAccessToken(userId) {
 }
 
 // Push items to the user's primary Google Calendar. Never throws upstream — calendar
-// problems must NEVER break the core capture flow.
+// problems must NEVER break the core capture flow. Returns the items that actually
+// landed, so the UI can say WHAT synced ("'Meeting' added for 6:00 PM"), not just a count.
 async function pushToGoogleCalendar(userId, items) {
-  if (!googleConfigured() || !items.length) return 0;
+  if (!googleConfigured() || !items.length) return [];
   const token = await getGoogleAccessToken(userId);
-  if (!token) return 0;
-  let synced = 0;
+  if (!token) return [];
+  const synced = [];
   for (const item of items) {
     try {
       const startMs = new Date(item.startIso).getTime();
@@ -336,9 +296,10 @@ async function pushToGoogleCalendar(userId, items) {
           description: 'Added by Loop',
           start: { dateTime: new Date(startMs).toISOString() },
           end: { dateTime: new Date(endMs).toISOString() },
+          reminders: { useDefault: true }, // the calendar notification IS the reminder
         }),
       });
-      if (resp.ok) synced++;
+      if (resp.ok) synced.push({ title: item.title, start: item.startIso });
       else console.warn('Calendar insert failed:', resp.status, (await resp.text()).slice(0, 200));
     } catch (err) {
       console.warn('Calendar insert error:', err.message);
@@ -438,7 +399,7 @@ Voice note transcript:
 
     // Build rows to insert, resolving dates deterministically via chrono (never the model).
     const VALID_BUCKETS = ['deep_work', 'admin', 'survival'];
-    const taskRows = (parsed.tasks || []).map((t) => ({
+    let taskRows = (parsed.tasks || []).map((t) => ({
       user_id: userId,
       title: t.title,
       due: resolveDate(t.due_phrase, tzOffset) || t.due || null,
@@ -463,6 +424,15 @@ Voice note transcript:
       text: n,
       mood: parsed.mood_signal || null,
     }));
+
+    // Intent consolidation: a task landing at the same time as an event from this dump
+    // ("wake up at 6" + "meeting at 6") is the same intent twice — the calendar event
+    // with its notification covers it. Belt-and-suspenders behind the prompt rule.
+    const { kept, dropped } = consolidateTaskEventOverlap(taskRows, parsedEvents.map((e) => e.row));
+    if (dropped.length) {
+      console.log(`Consolidated ${dropped.length} task(s) into same-time event(s):`, dropped.map((t) => t.title).join(', '));
+    }
+    taskRows = kept;
 
     // Exam radar: every exam with a known future date gets study blocks auto-planned,
     // timed to the student's energy pattern. This is the "midterm means a study plan,
@@ -495,8 +465,11 @@ Voice note transcript:
     }
 
     let profileSummary = profile.summary;
-    if (parsed.profile_update) {
-      profile.log.push({ text: parsed.profile_update, at: now });
+    // Sanitize the observation BEFORE it enters the log — one junk entry would keep
+    // re-polluting every future summary built from that log.
+    const cleanUpdate = sanitizeProfileText(parsed.profile_update, 200);
+    if (cleanUpdate) {
+      profile.log.push({ text: cleanUpdate, at: now });
       profileSummary = await consolidateProfile(profile);
       const { error } = await supabase
         .from('profiles')
@@ -507,13 +480,13 @@ Voice note transcript:
     // Sync to Google Calendar if connected: real events AND the auto-planned study
     // blocks (a midterm mention puts the study plan on their actual calendar).
     // Fully fenced — a calendar failure never breaks capture.
-    let googleSynced = 0;
+    let googleSyncedItems = [];
     try {
       const calendarItems = [
         ...newEvents.filter((e) => e.start).map((e) => ({ title: e.title, startIso: e.start, minutes: e.duration_minutes || 60 })),
         ...newTasks.filter((t) => t.due && t.title.startsWith('Study: ')).map((t) => ({ title: t.title, startIso: t.due, minutes: 60 })),
       ];
-      googleSynced = await pushToGoogleCalendar(userId, calendarItems);
+      googleSyncedItems = await pushToGoogleCalendar(userId, calendarItems);
     } catch (err) {
       console.warn('Google Calendar sync skipped:', err.message);
     }
@@ -528,7 +501,8 @@ Voice note transcript:
         mood_signal: parsed.mood_signal || null,
         coach_line: typeof parsed.coach_line === 'string' ? parsed.coach_line : null,
       },
-      google_synced: googleSynced,
+      google_synced: googleSyncedItems.length,
+      google_synced_items: googleSyncedItems,
       profile: profileSummary,
     });
   } catch (err) {

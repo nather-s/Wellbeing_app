@@ -357,6 +357,9 @@ async function processTranscript(transcript) {
       captureHint.textContent = data.error || 'Something went wrong — try again.';
       return;
     }
+    // The raw phrase's job is done the moment it's captured — clear it everywhere so
+    // it doesn't echo in multiple places alongside the "Just captured" results.
+    liveTranscript.textContent = '';
     showResults(data.parsed);
     updateProfilePill(data.profile);
     refreshAllPanels();
@@ -366,7 +369,7 @@ async function processTranscript(transcript) {
     buzz([15, 40, 25]);
     confettiBurst();
     const coach = data.parsed.coach_line || 'Captured. It\'s out of your head now.';
-    captureHint.textContent = data.google_synced > 0 ? `${coach} 📅 ${data.google_synced} added to Google Calendar.` : coach;
+    captureHint.textContent = `${coach}${googleSyncSummary(data.google_synced_items)}`;
   } catch (err) {
     captureHint.textContent = 'Could not reach the server. Is it running?';
     console.error(err);
@@ -375,13 +378,26 @@ async function processTranscript(transcript) {
   }
 }
 
+// Tell the student exactly WHAT landed on their calendar, not just how many things.
+// "📅 'chem midterm' added to Google Calendar for Jul 10, 2:00 PM" beats "1 added".
+function googleSyncSummary(items) {
+  if (!Array.isArray(items) || items.length === 0) return '';
+  const first = items[0];
+  const when = first.start ? ` for ${formatDate(first.start)}` : '';
+  if (items.length === 1) return ` 📅 '${first.title}' added to Google Calendar${when}.`;
+  return ` 📅 '${first.title}'${when} + ${items.length - 1} more added to Google Calendar.`;
+}
+
 // Typed capture — works in every browser (Safari, Firefox, desktop) and when voice mishears.
 textForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = textInput.value.trim();
   if (!text) return;
+  // Clear both input surfaces immediately — the phrase shouldn't linger anywhere
+  // while (or after) it's being processed.
   textInput.value = '';
-  captureHint.textContent = 'Sorting the chaos…';
+  liveTranscript.textContent = '';
+  captureHint.textContent = 'Sorting it out…';
   processTranscript(text);
 });
 
@@ -434,7 +450,11 @@ function showResults(parsed) {
 }
 
 function updateProfilePill(profileSummary) {
-  profilePill.textContent = profileSummary
+  // Defense-in-depth against prompt leakage: the server sanitizes what it stores, but
+  // if instruction-looking text ever reaches the client anyway, don't render it.
+  const looksLikeLeak = typeof profileSummary === 'string'
+    && /the user wants|return only|single short paragraph|condense the following|json/i.test(profileSummary);
+  profilePill.textContent = profileSummary && !looksLikeLeak
     ? (profileSummary.length > 60 ? profileSummary.slice(0, 60) + '…' : profileSummary)
     : 'Still getting to know you';
 }
