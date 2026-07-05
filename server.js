@@ -360,7 +360,28 @@ app.get('/api/config', (req, res) => {
 // Everything else under /api requires a logged-in user.
 app.use('/api', requireAuth);
 
-app.post('/api/process', async (req, res) => {
+// Per-user rate limit on the two AI-calling endpoints. The shared free-model quota
+// (~200 req/day across EVERY user) is the app's real bottleneck once more than a
+// handful of people use it — one person spamming the button (by accident or on
+// purpose) can burn a disproportionate share before anyone else gets a turn.
+// In-memory sliding window is fine here: single Render instance, and losing the
+// counters on a restart just means a brief reset, not a security hole.
+const rateLimitHits = new Map(); // userId -> timestamps[]
+function rateLimit(maxPerWindow, windowMs) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const hits = (rateLimitHits.get(req.userId) || []).filter((t) => now - t < windowMs);
+    if (hits.length >= maxPerWindow) {
+      return res.status(429).json({ error: "You're going fast! Give it a minute and try again." });
+    }
+    hits.push(now);
+    rateLimitHits.set(req.userId, hits);
+    next();
+  };
+}
+const captureRateLimit = rateLimit(15, 10 * 60 * 1000); // 15 captures / 10 min / user
+
+app.post('/api/process', captureRateLimit, async (req, res) => {
   try {
     const { transcript, tz_offset_minutes } = req.body;
     if (!transcript || !transcript.trim()) {
@@ -589,7 +610,9 @@ app.post('/api/profile/energy', async (req, res) => {
 // reflow — new times as natural phrases, resolved by chrono (never model date math),
 // plus a guilt-free message. The model sees short numbers, not raw ids, so a small
 // free model can't mangle UUIDs.
-app.post('/api/catchup', async (req, res) => {
+const catchupRateLimit = rateLimit(5, 10 * 60 * 1000); // 5 reflows / 10 min / user (heavier call)
+
+app.post('/api/catchup', catchupRateLimit, async (req, res) => {
   try {
     const tzOffset = Number.isFinite(req.body?.tz_offset_minutes) ? req.body.tz_offset_minutes : null;
     const nowIso = new Date().toISOString();

@@ -645,6 +645,14 @@ body {
 
 .profile-empty { color: var(--ink-dim); }
 
+.profile-note {
+  font-size: 12px;
+  color: var(--ink-dim);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.profile-note a { color: var(--accent-2); }
+
 .google-btn {
   margin-top: 10px;
   background: var(--surface-2);
