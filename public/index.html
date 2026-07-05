@@ -17,26 +17,102 @@
 <div class="bg-glow bg-glow-2"></div>
 <div class="bg-glow bg-glow-3"></div>
 
-<!-- Login screen — shown until the person is signed in -->
+<!-- Landing / pitch page — shown until the person is signed in. The login form at the
+     bottom is the real product; everything above it is the "website" wrapper around it. -->
 <div class="login-screen" id="loginScreen" hidden>
-  <div class="login-card">
+
+  <nav class="landing-nav">
     <div class="brand">
       <span class="brand-mark"></span>
       <span class="brand-name">Loop</span>
     </div>
-    <h1 class="login-title">Dump the panic.<br>Get a plan.</h1>
-    <p class="login-sub">Say everything on your mind — the midterm, the TA email, the laundry. Loop turns it into a clear, organized week. Email in, code back, no password.</p>
-    <form id="loginForm" class="login-form" autocomplete="on">
-      <input id="loginEmail" type="email" placeholder="you@example.com" required aria-label="Email address" />
-      <button type="submit" id="loginSubmit">Send me a code</button>
-    </form>
-    <form id="codeForm" class="login-form" autocomplete="one-time-code" hidden>
-      <input id="loginCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Code from your email" required aria-label="Verification code" />
-      <button type="submit" id="codeSubmit">Verify &amp; log in</button>
-    </form>
-    <p class="login-status" id="loginStatus"></p>
-    <p class="login-version">build 2026-07-04.7</p>
-  </div>
+    <a href="#get-started" class="nav-cta">Get started</a>
+  </nav>
+
+  <header class="landing-hero">
+    <h1 class="hero-title">Dump the panic.<br>Get a plan.</h1>
+    <p class="hero-sub">Say everything on your mind — the midterm, the TA email, the laundry. Loop turns it into a clear, organized week. No app to download, no password, free to try.</p>
+    <a href="#get-started" class="hero-cta">Try it free — takes 10 seconds</a>
+
+    <!-- Honest visual: a stylized mock of what the real app actually does, not a stock photo -->
+    <div class="phone-mock" aria-hidden="true">
+      <div class="phone-mock-mic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z" fill="#fff"/><path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+      </div>
+      <p class="phone-mock-quote">"chem midterm next Friday at 2pm, gotta email my TA, and I'm out of clean clothes"</p>
+      <div class="phone-mock-results">
+        <div class="phone-mock-card"><span class="result-tag event">event</span><span>chem midterm · Fri 2:00 PM</span></div>
+        <div class="phone-mock-card"><span class="result-tag task">task</span><span>🧠 Study: chem midterm · Wed 7:00 PM</span></div>
+        <div class="phone-mock-card"><span class="result-tag task">task</span><span>📋 email TA about lab report</span></div>
+        <div class="phone-mock-card"><span class="result-tag note">note</span><span>🧺 laundry</span></div>
+      </div>
+    </div>
+  </header>
+
+  <section class="landing-section">
+    <h2 class="section-title">Built for the overburdened student</h2>
+    <p class="section-lede">Not another productivity app that wants you to plan your life in a spreadsheet. Loop is for the 11pm brain-dump when everything's hitting at once — it listens, sorts, and hands you back a plan instead of a wall of red.</p>
+  </section>
+
+  <section class="landing-section">
+    <h2 class="section-title">What it actually does</h2>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🎤</div>
+        <h3>Speak or type, zero structure needed</h3>
+        <p>Ramble like you would to a friend. Loop pulls out what's a task, what's an event, and what's just a feeling worth remembering.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📚</div>
+        <h3>Exam radar</h3>
+        <p>Mention a midterm and Loop auto-schedules study blocks in the days before it — timed to when your brain actually works, morning or night.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">✨</div>
+        <h3>Fix my week</h3>
+        <p>Fell behind? One tap reflows everything overdue into a realistic plan. No red wall of shame, no lecture — just a clean slate.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📅</div>
+        <h3>Syncs to Google Calendar</h3>
+        <p>Connect once and every event — plus the auto-planned study blocks — lands on the calendar you already check.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="landing-section">
+    <h2 class="section-title">How it works</h2>
+    <div class="steps-grid">
+      <div class="step-item"><span class="step-num">1</span><p>Tap the mic (or type) and say what's on your mind — no filter, no structure.</p></div>
+      <div class="step-item"><span class="step-num">2</span><p>Loop sorts it into tasks, events, and study blocks, triaged by what actually needs your focus.</p></div>
+      <div class="step-item"><span class="step-num">3</span><p>Everything lands on your calendar and your to-do list — organized, guilt-free.</p></div>
+    </div>
+  </section>
+
+  <section class="landing-section" id="get-started">
+    <div class="login-card">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">Loop</span>
+      </div>
+      <h1 class="login-title">Try it now</h1>
+      <p class="login-sub">Email in, code back, no password.</p>
+      <form id="loginForm" class="login-form" autocomplete="on">
+        <input id="loginEmail" type="email" placeholder="you@example.com" required aria-label="Email address" />
+        <button type="submit" id="loginSubmit">Send me a code</button>
+      </form>
+      <form id="codeForm" class="login-form" autocomplete="one-time-code" hidden>
+        <input id="loginCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Code from your email" required aria-label="Verification code" />
+        <button type="submit" id="codeSubmit">Verify &amp; log in</button>
+      </form>
+      <p class="login-status" id="loginStatus"></p>
+      <p class="login-version">build 2026-07-04.8</p>
+    </div>
+  </section>
+
+  <footer class="landing-footer">
+    <p>Loop — built for students who have too much going on. Free to use.</p>
+  </footer>
 </div>
 
 <div class="app" id="appRoot" hidden>
