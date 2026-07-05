@@ -1,17 +1,28 @@
 // Pure, side-effect-free helpers shared by server.js and the test suite.
 import * as chrono from 'chrono-node';
 
+// A bare number/time with no preposition ("9", "9:30", "9pm") has no grammatical signal
+// that it's even a time reference, so chrono-node correctly refuses to guess at it and
+// returns null. Retrying with "at " prepended turns it into something chrono can parse
+// the exact same way "at 9" already does, without changing the meaning at all.
+const BARE_TIME_RE = /^\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)?$/i;
+
 // Deterministically resolve a natural-language time phrase ("tomorrow at 7am") into an ISO
 // string. Date math is done here by chrono-node — never by the LLM, which is unreliable at it.
 // tzOffsetMinutes comes from the user's browser (positive = ahead of UTC, e.g. IST = +330),
 // so "tomorrow at 7am" means 7am in the USER's timezone even though the server runs in UTC.
 export function resolveDate(phrase, tzOffsetMinutes) {
   if (!phrase || typeof phrase !== 'string') return null;
+  const trimmed = phrase.trim();
+  if (!trimmed) return null;
   try {
     const ref = Number.isFinite(tzOffsetMinutes)
       ? { instant: new Date(), timezone: tzOffsetMinutes }
       : new Date();
-    const d = chrono.parseDate(phrase, ref, { forwardDate: true });
+    let d = chrono.parseDate(trimmed, ref, { forwardDate: true });
+    if (!d && BARE_TIME_RE.test(trimmed)) {
+      d = chrono.parseDate(`at ${trimmed}`, ref, { forwardDate: true });
+    }
     return d ? d.toISOString() : null;
   } catch {
     return null;

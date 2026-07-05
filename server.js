@@ -60,7 +60,7 @@ Return ONLY valid JSON (no prose, no markdown fences) matching exactly this shap
 }
 
 Rules:
-- "due_phrase" / "start_phrase": copy the EXACT time words heard, verbatim (e.g. "tomorrow at 7am", "next Friday", "before section"). NEVER compute dates yourself — just quote the phrase. null if no time was mentioned.
+- "due_phrase" / "start_phrase": copy the EXACT time words heard, verbatim (e.g. "tomorrow at 7am", "next Friday", "before section"). Always include the connecting word ("at", "on", "by") that was said — if someone just says a bare number like "9", write "at 9", not "9" alone. NEVER compute dates yourself — just quote the phrase. null if no time was mentioned.
 - "bucket" triages each task:
   - "deep_work" = focused brain time: studying, essays, problem sets, projects, coding, reading.
   - "admin" = quick logistics: emailing TAs/professors, forms, sign-ups, scheduling, submitting things.
@@ -419,11 +419,14 @@ Voice note transcript:
     }
 
     // Build rows to insert, resolving dates deterministically via chrono (never the model).
+    // Deliberately NO fallback to a model-guessed ISO field here: if chrono can't parse the
+    // phrase, "no time set" (null) is far better than trusting the AI's own date arithmetic,
+    // which is exactly the unreliable behavior this whole pipeline exists to avoid.
     const VALID_BUCKETS = ['deep_work', 'admin', 'survival'];
     let taskRows = (parsed.tasks || []).map((t) => ({
       user_id: userId,
       title: t.title,
-      due: resolveDate(t.due_phrase, tzOffset) || t.due || null,
+      due: resolveDate(t.due_phrase, tzOffset),
       due_phrase: t.due_phrase || null,
       priority: t.priority || 'medium',
       bucket: VALID_BUCKETS.includes(t.bucket) ? t.bucket : 'admin',
@@ -434,7 +437,7 @@ Voice note transcript:
       row: {
         user_id: userId,
         title: e.title,
-        start: resolveDate(e.start_phrase, tzOffset) || e.start || null,
+        start: resolveDate(e.start_phrase, tzOffset),
         start_phrase: e.start_phrase || null,
         duration_minutes: e.duration_minutes ?? null,
       },

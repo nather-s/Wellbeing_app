@@ -117,6 +117,22 @@ test('returns null for garbage and missing phrases', () => {
   assert.equal(resolveDate('completely not a time', 330), null);
 });
 
+// Regression test for the "said 9, got scheduled for 11:30" bug report. Root cause: a
+// bare number like "9" has no grammatical signal it's a time at all, so chrono correctly
+// refuses it (null) — the fix retries with "at " prepended instead of ever trusting a
+// model-guessed absolute date as a fallback.
+test('resolves a bare hour like "9" the same as "at 9" (the reported bug)', () => {
+  const bare = resolveDate('9', 330);
+  const withAt = resolveDate('at 9', 330);
+  assert.ok(bare, 'bare "9" must resolve, not silently fail');
+  assert.equal(bare, withAt, 'bare number and "at <number>" must resolve identically');
+});
+
+test('resolves bare "9:30" and "9pm" the same way as their "at" equivalents', () => {
+  assert.equal(resolveDate('9:30', 330), resolveDate('at 9:30', 330));
+  assert.equal(resolveDate('9pm', 330), resolveDate('at 9pm', 330));
+});
+
 // ---------- parseExtractionJson ----------
 
 test('parses fenced and bare JSON, rejects non-objects', () => {
