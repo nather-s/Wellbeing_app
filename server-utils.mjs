@@ -112,3 +112,46 @@ export function sanitizeProfileText(text, maxLen = 400) {
   if (PROMPT_LEAK_FRAGMENTS.some((frag) => lower.includes(frag))) return null;
   return trimmed;
 }
+
+// Founder dashboard: turns raw user rows + raw capture rows (tasks+events+notes, just
+// {user_id, created_at}) into the numbers a founder actually watches for retention —
+// without touching the database itself, so this is fully unit-testable.
+// `users`: [{id, email, created_at}]. `captureRows`: [{user_id, created_at}].
+export function aggregateUsageStats(users, captureRows, { nowMs = Date.now(), windowDays = 7 } = {}) {
+  const windowMs = windowDays * 86400000;
+  const cutoff = nowMs - windowMs;
+
+  const perUser = new Map(
+    users.map((u) => [u.id, { email: u.email || '(no email)', joinedAt: u.created_at || null, totalCaptures: 0, lastCaptureAt: null }])
+  );
+
+  let capturesInWindow = 0;
+  const activeInWindow = new Set();
+
+  for (const row of captureRows) {
+    const entry = perUser.get(row.user_id);
+    if (!entry) continue; // orphaned row (deleted user) — ignore, don't crash the dashboard
+    entry.totalCaptures++;
+    const t = new Date(row.created_at).getTime();
+    if (!entry.lastCaptureAt || t > new Date(entry.lastCaptureAt).getTime()) entry.lastCaptureAt = row.created_at;
+    if (t >= cutoff) {
+      capturesInWindow++;
+      activeInWindow.add(row.user_id);
+    }
+  }
+
+  const perUserList = [...perUser.values()].sort((a, b) => {
+    const at = a.lastCaptureAt ? new Date(a.lastCaptureAt).getTime() : -Infinity;
+    const bt = b.lastCaptureAt ? new Date(b.lastCaptureAt).getTime() : -Infinity;
+    return bt - at; // most recently active first; never-active users sink to the bottom
+  });
+
+  return {
+    totalUsers: users.length,
+    totalCaptures: captureRows.length,
+    activeUsersInWindow: activeInWindow.size,
+    capturesInWindow,
+    windowDays,
+    perUser: perUserList,
+  };
+}

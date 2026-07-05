@@ -10,6 +10,7 @@ import {
   parseExtractionJson,
   consolidateTaskEventOverlap,
   sanitizeProfileText,
+  aggregateUsageStats,
 } from './server-utils.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +19,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY; // safe to expose to the browser (login only)
+// Only this email can ever see the founder dashboard (aggregate usage across ALL users).
+// Falls back to your own account so this works out of the box without extra setup.
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'agrawalekansh29@gmail.com').toLowerCase();
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -210,6 +214,7 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'Session expired — please log in again.' });
     }
     req.userId = data.user.id;
+    req.userEmail = data.user.email || null;
     next();
   } catch (e) {
     console.error('Auth check failed:', e.message);
@@ -380,6 +385,41 @@ function rateLimit(maxPerWindow, windowMs) {
   };
 }
 const captureRateLimit = rateLimit(15, 10 * 60 * 1000); // 15 captures / 10 min / user
+
+// Founder-only dashboard: aggregate usage across every user, so "is anyone using this?"
+// is a glance instead of digging through Supabase by hand. Gated server-side on email —
+// never trust a client-side check for something that exposes every user's activity.
+function requireAdmin(req, res, next) {
+  if ((req.userEmail || '').toLowerCase() !== ADMIN_EMAIL) {
+    return res.status(403).json({ error: 'Not authorized.' });
+  }
+  next();
+}
+
+app.get('/api/admin/stats', requireAdmin, async (req, res) => {
+  try {
+    // listUsers paginates at 1000/page by default — plenty of headroom for an MVP's
+    // early user count; revisit if this ever needs a second page.
+    const { data: userPage, error: usersErr } = await supabase.auth.admin.listUsers();
+    if (usersErr) throw new Error(usersErr.message);
+    const users = userPage.users.map((u) => ({ id: u.id, email: u.email, created_at: u.created_at }));
+
+    // Only the columns the aggregator needs — keeps this cheap even as capture volume grows.
+    const [tasksRes, eventsRes, notesRes] = await Promise.all([
+      supabase.from('tasks').select('user_id, created_at'),
+      supabase.from('events').select('user_id, created_at'),
+      supabase.from('notes').select('user_id, created_at'),
+    ]);
+    for (const r of [tasksRes, eventsRes, notesRes]) if (r.error) throw new Error(r.error.message);
+    const captureRows = [...tasksRes.data, ...eventsRes.data, ...notesRes.data];
+
+    const windowDays = Number(req.query.window_days) || 7;
+    res.json(aggregateUsageStats(users, captureRows, { windowDays }));
+  } catch (err) {
+    console.error('Admin stats failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.post('/api/process', captureRateLimit, async (req, res) => {
   try {

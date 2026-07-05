@@ -485,6 +485,7 @@ async function refreshAllPanels() {
     authedFetch('/api/profile').then((r) => r.json()),
     authedFetch('/api/google/status').then((r) => r.json()).catch(() => ({ configured: false, connected: false })),
   ]);
+  checkAdminAccess(); // silently reveals the Stats tab only if the server allows it
 
   renderTasks(tasks);
   renderEvents(events);
@@ -752,6 +753,52 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+// ---------- Founder stats (only ever visible to the admin account — server-enforced) ----------
+const adminTab = document.getElementById('adminTab');
+let adminChecked = false; // avoid re-hitting the endpoint on every single refresh
+
+async function checkAdminAccess() {
+  if (adminChecked) return;
+  try {
+    const res = await authedFetch('/api/admin/stats');
+    if (res.ok) {
+      adminTab.hidden = false;
+      renderAdminStats(await res.json());
+    }
+    // A 403 for anyone else is expected and silent — not an error, just "not you".
+  } catch { /* stats are a nice-to-have, never worth surfacing an error for */ }
+  adminChecked = true;
+}
+
+function renderAdminStats(stats) {
+  const panel = document.getElementById('panel-admin');
+  const rows = stats.perUser
+    .map((u) => `
+      <tr>
+        <td>${escapeHtml(u.email)}</td>
+        <td>${u.joinedAt ? formatDate(u.joinedAt) : '—'}</td>
+        <td>${u.totalCaptures}</td>
+        <td>${u.lastCaptureAt ? formatDate(u.lastCaptureAt) : 'never'}</td>
+      </tr>`)
+    .join('');
+
+  panel.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-num">${stats.totalUsers}</div><div class="stat-label">Total users</div></div>
+      <div class="stat-card"><div class="stat-num">${stats.totalCaptures}</div><div class="stat-label">Total captures</div></div>
+      <div class="stat-card"><div class="stat-num">${stats.activeUsersInWindow}</div><div class="stat-label">Active (last ${stats.windowDays}d)</div></div>
+      <div class="stat-card"><div class="stat-num">${stats.capturesInWindow}</div><div class="stat-label">Captures (last ${stats.windowDays}d)</div></div>
+    </div>
+    <div class="profile-card stats-table-wrap">
+      <h3>Who's using it</h3>
+      <table class="stats-table">
+        <thead><tr><th>Email</th><th>Joined</th><th>Captures</th><th>Last active</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4">No users yet.</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 // Support the PWA "Quick capture" shortcut: /?listen=1 jumps straight into recording (once logged in).

@@ -6,6 +6,7 @@ import {
   parseExtractionJson,
   consolidateTaskEventOverlap,
   sanitizeProfileText,
+  aggregateUsageStats,
 } from '../server-utils.mjs';
 
 // ---------- consolidateTaskEventOverlap (issue: task+event duplication) ----------
@@ -134,6 +135,69 @@ test('resolves bare "9:30" and "9pm" the same way as their "at" equivalents', ()
 });
 
 // ---------- parseExtractionJson ----------
+
+// ---------- aggregateUsageStats (founder dashboard) ----------
+
+test('counts total users and total captures correctly', () => {
+  const now = Date.now();
+  const users = [
+    { id: 'a', email: 'a@x.com', created_at: new Date(now - 30 * 86400000).toISOString() },
+    { id: 'b', email: 'b@x.com', created_at: new Date(now - 20 * 86400000).toISOString() },
+  ];
+  const rows = [
+    { user_id: 'a', created_at: new Date(now - 1 * 86400000).toISOString() },
+    { user_id: 'a', created_at: new Date(now - 10 * 86400000).toISOString() },
+    { user_id: 'b', created_at: new Date(now - 40 * 86400000).toISOString() }, // outside window
+  ];
+  const stats = aggregateUsageStats(users, rows, { nowMs: now, windowDays: 7 });
+  assert.equal(stats.totalUsers, 2);
+  assert.equal(stats.totalCaptures, 3);
+});
+
+test('activeUsersInWindow only counts users with a capture inside the window', () => {
+  const now = Date.now();
+  const users = [
+    { id: 'a', email: 'a@x.com', created_at: new Date(now - 30 * 86400000).toISOString() },
+    { id: 'b', email: 'b@x.com', created_at: new Date(now - 30 * 86400000).toISOString() },
+  ];
+  const rows = [
+    { user_id: 'a', created_at: new Date(now - 2 * 86400000).toISOString() }, // inside 7-day window
+    { user_id: 'b', created_at: new Date(now - 20 * 86400000).toISOString() }, // outside
+  ];
+  const stats = aggregateUsageStats(users, rows, { nowMs: now, windowDays: 7 });
+  assert.equal(stats.activeUsersInWindow, 1);
+  assert.equal(stats.capturesInWindow, 1);
+});
+
+test('sorts perUser by most recently active first; never-active users last', () => {
+  const now = Date.now();
+  const users = [
+    { id: 'stale', email: 'stale@x.com', created_at: new Date(now - 30 * 86400000).toISOString() },
+    { id: 'fresh', email: 'fresh@x.com', created_at: new Date(now - 30 * 86400000).toISOString() },
+    { id: 'never', email: 'never@x.com', created_at: new Date(now - 30 * 86400000).toISOString() },
+  ];
+  const rows = [
+    { user_id: 'stale', created_at: new Date(now - 20 * 86400000).toISOString() },
+    { user_id: 'fresh', created_at: new Date(now - 1 * 86400000).toISOString() },
+  ];
+  const stats = aggregateUsageStats(users, rows, { nowMs: now });
+  assert.deepEqual(stats.perUser.map((u) => u.email), ['fresh@x.com', 'stale@x.com', 'never@x.com']);
+});
+
+test('ignores capture rows belonging to a deleted user instead of crashing', () => {
+  const users = [{ id: 'a', email: 'a@x.com', created_at: new Date().toISOString() }];
+  const rows = [{ user_id: 'ghost-deleted-user', created_at: new Date().toISOString() }];
+  const stats = aggregateUsageStats(users, rows);
+  assert.equal(stats.totalCaptures, 1); // raw row count is unaffected
+  assert.equal(stats.perUser[0].totalCaptures, 0); // but attributed to no one
+});
+
+test('handles zero users and zero captures without dividing by zero or throwing', () => {
+  const stats = aggregateUsageStats([], []);
+  assert.equal(stats.totalUsers, 0);
+  assert.equal(stats.activeUsersInWindow, 0);
+  assert.deepEqual(stats.perUser, []);
+});
 
 test('parses fenced and bare JSON, rejects non-objects', () => {
   assert.deepEqual(parseExtractionJson('```json\n{"a":1}\n```'), { a: 1 });
