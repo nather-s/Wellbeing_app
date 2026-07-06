@@ -155,3 +155,173 @@ export function aggregateUsageStats(users, captureRows, { nowMs = Date.now(), wi
     perUser: perUserList,
   };
 }
+
+// ---------- Product analytics (privacy-safe: NEVER stores user content) ----------
+// Every event records only THAT an action happened plus small, non-identifying
+// metadata (which tab, voice-vs-text, an error kind). No transcript, task title,
+// note text, mood, or email is ever written to the analytics table — that keeps
+// this defensible as plain product analytics for Google OAuth verification.
+
+// The complete set of event types the system understands. Anything not in here is
+// rejected, so the table can never fill with arbitrary (or content-bearing) junk.
+export const ANALYTICS_EVENT_TYPES = new Set([
+  'app_opened',
+  'capture_started',
+  'capture_method',
+  'capture_succeeded',
+  'capture_failed',
+  'tab_viewed',
+  'calendar_connect_clicked',
+  'calendar_connected',
+  'calendar_synced',
+  'catchup_used',
+  'energy_set',
+  'task_completed',
+  'task_deleted',
+  'event_deleted',
+  'speech_error',
+]);
+
+// Only these types may be reported by the browser via /api/track. The rest are
+// emitted server-side from inside the relevant handlers, where they can't be faked.
+export const CLIENT_TRACKABLE_TYPES = new Set([
+  'app_opened',
+  'capture_started',
+  'capture_method',
+  'tab_viewed',
+  'calendar_connect_clicked',
+  'task_completed',
+  'task_deleted',
+  'event_deleted',
+  'speech_error',
+]);
+
+// Metadata is whitelisted key-by-key and coerced to safe, bounded values so nothing
+// free-form (and no accidental PII) can ride along in the meta blob.
+const ALLOWED_TABS = new Set(['today', 'tasks', 'events', 'notes', 'profile', 'admin']);
+const ALLOWED_METHODS = new Set(['voice', 'text']);
+const ALLOWED_ENERGY = new Set(['morning', 'night']);
+const ALLOWED_FAIL_KINDS = new Set(['rate_limit', 'timeout', 'parse', 'empty', 'server']);
+
+export function sanitizeAnalyticsMeta(type, meta) {
+  const m = meta && typeof meta === 'object' ? meta : {};
+  const out = {};
+  switch (type) {
+    case 'capture_method':
+    case 'capture_succeeded':
+      if (ALLOWED_METHODS.has(m.method)) out.method = m.method;
+      break;
+    case 'tab_viewed':
+      if (ALLOWED_TABS.has(m.tab)) out.tab = m.tab;
+      break;
+    case 'capture_failed':
+      out.kind = ALLOWED_FAIL_KINDS.has(m.kind) ? m.kind : 'server';
+      break;
+    case 'calendar_synced':
+      out.count = Number.isFinite(m.count) ? Math.max(0, Math.min(50, Math.trunc(m.count))) : 0;
+      break;
+    case 'energy_set':
+      if (ALLOWED_ENERGY.has(m.energy)) out.energy = m.energy;
+      break;
+    case 'speech_error':
+      // A short recognition error code like 'no-speech' or 'network' — capped, never text.
+      if (typeof m.code === 'string') out.code = m.code.slice(0, 40);
+      break;
+    default:
+      break; // most events carry no metadata at all
+  }
+  return out;
+}
+
+// Derive a coarse platform label from the User-Agent, server-side. Deliberately
+// low-resolution ("Android/Chrome") — enough to spot device-specific bugs like the
+// Android transcript issue, without fingerprinting anyone.
+export function coarsePlatform(userAgent) {
+  const ua = (userAgent || '').toLowerCase();
+  if (!ua) return 'unknown';
+  let os = 'other';
+  if (ua.includes('android')) os = 'Android';
+  else if (/iphone|ipad|ipod/.test(ua)) os = 'iOS';
+  else if (ua.includes('windows')) os = 'Windows';
+  else if (ua.includes('mac os') || ua.includes('macintosh')) os = 'macOS';
+  else if (ua.includes('linux')) os = 'Linux';
+  let browser = 'other';
+  // Order matters: Edge/Brave/Opera all contain "chrome"; check the specific ones first.
+  if (ua.includes('edg/')) browser = 'Edge';
+  else if (ua.includes('opr/') || ua.includes('opera')) browser = 'Opera';
+  else if (ua.includes('firefox')) browser = 'Firefox';
+  else if (ua.includes('chrome') || ua.includes('crios')) browser = 'Chrome';
+  else if (ua.includes('safari')) browser = 'Safari';
+  return `${os}/${browser}`;
+}
+
+// Roll a flat list of analytics rows into the numbers the founder dashboard shows.
+// Everything is counted within the window except the all-time total. Defensive against
+// unknown types and missing meta so a stray row never breaks the dashboard.
+export function aggregateAnalyticsEvents(rows, { nowMs = Date.now(), windowDays = 7 } = {}) {
+  const cutoff = nowMs - windowDays * 86400000;
+  const inWindow = rows.filter((r) => new Date(r.created_at).getTime() >= cutoff);
+
+  const count = (type) => inWindow.filter((r) => r.type === type).length;
+  const tally = (type, key) => {
+    const out = {};
+    for (const r of inWindow) {
+      if (r.type !== type) continue;
+      const v = (r.meta && r.meta[key]) || 'unknown';
+      out[v] = (out[v] || 0) + 1;
+    }
+    return out;
+  };
+
+  const started = count('capture_started');
+  const succeeded = count('capture_succeeded');
+  const failed = count('capture_failed');
+
+  const platforms = {};
+  for (const r of inWindow) {
+    const p = r.platform || 'unknown';
+    platforms[p] = (platforms[p] || 0) + 1;
+  }
+
+  const tabCounts = tally('tab_viewed', 'tab');
+  const topTabs = Object.entries(tabCounts).sort((a, b) => b[1] - a[1]);
+
+  let itemsSynced = 0;
+  for (const r of inWindow) {
+    if (r.type === 'calendar_synced') itemsSynced += (r.meta && Number(r.meta.count)) || 0;
+  }
+
+  return {
+    windowDays,
+    totalEvents: rows.length,
+    eventsInWindow: inWindow.length,
+    funnel: {
+      app_opened: count('app_opened'),
+      capture_started: started,
+      capture_succeeded: succeeded,
+      capture_failed: failed,
+      // Success rate of captures that actually finished (started can lag on abandons).
+      successRate: succeeded + failed > 0 ? Math.round((succeeded / (succeeded + failed)) * 100) : null,
+    },
+    captureMethods: tally('capture_method', 'method'),
+    calendar: {
+      connectClicked: count('calendar_connect_clicked'),
+      connected: count('calendar_connected'),
+      syncEvents: count('calendar_synced'),
+      itemsSynced,
+    },
+    catchupUsed: count('catchup_used'),
+    energySet: tally('energy_set', 'energy'),
+    actions: {
+      task_completed: count('task_completed'),
+      task_deleted: count('task_deleted'),
+      event_deleted: count('event_deleted'),
+    },
+    errors: {
+      captureFailedByKind: tally('capture_failed', 'kind'),
+      speechErrorByCode: tally('speech_error', 'code'),
+    },
+    platforms,
+    topTabs,
+  };
+}

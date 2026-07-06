@@ -49,10 +49,24 @@ create table if not exists public.google_accounts (
 );
 alter table public.google_accounts enable row level security;
 
+-- Product analytics. Privacy-safe by design: this table only ever records THAT an
+-- action happened (a capture, a tab view, an error) plus tiny non-identifying metadata
+-- like 'voice' vs 'text'. It NEVER stores a transcript, task title, note, mood, or
+-- email — so no user content lives here. Rows are deleted with the user (cascade).
+create table if not exists public.analytics_events (
+  id          bigint generated always as identity primary key,
+  user_id     uuid references auth.users(id) on delete cascade,
+  type        text not null,        -- e.g. 'capture_succeeded', 'tab_viewed'
+  meta        jsonb not null default '{}'::jsonb, -- small whitelisted keys only, no content
+  platform    text,                 -- coarse, e.g. 'Android/Chrome' — not a full user-agent
+  created_at  timestamptz not null default now()
+);
+
 -- Speed up the per-user lookups the app does constantly.
 create index if not exists tasks_user_idx  on public.tasks(user_id);
 create index if not exists events_user_idx on public.events(user_id);
 create index if not exists notes_user_idx  on public.notes(user_id);
+create index if not exists analytics_type_time_idx on public.analytics_events(type, created_at);
 
 -- Lock the tables down. The browser NEVER queries these directly — only our server does,
 -- using the service key (which bypasses RLS). Turning RLS on with no public policies means
@@ -61,3 +75,4 @@ alter table public.tasks    enable row level security;
 alter table public.events   enable row level security;
 alter table public.notes    enable row level security;
 alter table public.profiles enable row level security;
+alter table public.analytics_events enable row level security;

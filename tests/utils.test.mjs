@@ -7,6 +7,11 @@ import {
   consolidateTaskEventOverlap,
   sanitizeProfileText,
   aggregateUsageStats,
+  aggregateAnalyticsEvents,
+  sanitizeAnalyticsMeta,
+  coarsePlatform,
+  CLIENT_TRACKABLE_TYPES,
+  ANALYTICS_EVENT_TYPES,
 } from '../server-utils.mjs';
 
 // ---------- consolidateTaskEventOverlap (issue: task+event duplication) ----------
@@ -204,4 +209,89 @@ test('parses fenced and bare JSON, rejects non-objects', () => {
   assert.deepEqual(parseExtractionJson('{"a":1}'), { a: 1 });
   assert.throws(() => parseExtractionJson('[1,2]'));
   assert.throws(() => parseExtractionJson('sw</</</</'));
+});
+
+// ---------- Analytics: privacy-safe metadata sanitization ----------
+
+test('sanitizeAnalyticsMeta whitelists known keys and drops everything else', () => {
+  // A caller trying to smuggle content or extra keys through gets them stripped.
+  assert.deepEqual(
+    sanitizeAnalyticsMeta('tab_viewed', { tab: 'tasks', transcript: 'my private note', email: 'a@b.com' }),
+    { tab: 'tasks' }
+  );
+  // Unknown tab value is dropped rather than stored.
+  assert.deepEqual(sanitizeAnalyticsMeta('tab_viewed', { tab: 'evil' }), {});
+  // Method must be voice/text.
+  assert.deepEqual(sanitizeAnalyticsMeta('capture_method', { method: 'text' }), { method: 'text' });
+  assert.deepEqual(sanitizeAnalyticsMeta('capture_method', { method: 'hacked' }), {});
+});
+
+test('sanitizeAnalyticsMeta clamps and defaults numeric/enum fields', () => {
+  assert.deepEqual(sanitizeAnalyticsMeta('calendar_synced', { count: 999 }), { count: 50 }); // clamped
+  assert.deepEqual(sanitizeAnalyticsMeta('calendar_synced', { count: -3 }), { count: 0 });
+  assert.deepEqual(sanitizeAnalyticsMeta('calendar_synced', {}), { count: 0 });
+  assert.deepEqual(sanitizeAnalyticsMeta('capture_failed', { kind: 'timeout' }), { kind: 'timeout' });
+  assert.deepEqual(sanitizeAnalyticsMeta('capture_failed', { kind: 'weird' }), { kind: 'server' }); // safe default
+  assert.deepEqual(sanitizeAnalyticsMeta('energy_set', { energy: 'morning' }), { energy: 'morning' });
+});
+
+test('sanitizeAnalyticsMeta caps a speech error code and never stores free text', () => {
+  const long = 'x'.repeat(200);
+  const out = sanitizeAnalyticsMeta('speech_error', { code: long });
+  assert.equal(out.code.length, 40);
+});
+
+test('the browser can only report a safe subset of event types', () => {
+  // Server-emitted events must NOT be forgeable from the client.
+  assert.ok(CLIENT_TRACKABLE_TYPES.has('tab_viewed'));
+  assert.ok(!CLIENT_TRACKABLE_TYPES.has('capture_succeeded'));
+  assert.ok(!CLIENT_TRACKABLE_TYPES.has('calendar_connected'));
+  // Everything client-trackable is also a known type.
+  for (const t of CLIENT_TRACKABLE_TYPES) assert.ok(ANALYTICS_EVENT_TYPES.has(t));
+});
+
+// ---------- Analytics: coarse platform (no fingerprinting) ----------
+
+test('coarsePlatform derives OS/browser without the full user-agent', () => {
+  assert.equal(coarsePlatform('Mozilla/5.0 (Linux; Android 14) ... Chrome/120 Mobile Safari/537'), 'Android/Chrome');
+  assert.equal(coarsePlatform('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) ... Version/17 Safari'), 'iOS/Safari');
+  assert.equal(coarsePlatform('Mozilla/5.0 (Windows NT 10.0) ... Edg/120'), 'Windows/Edge');
+  assert.equal(coarsePlatform(''), 'unknown');
+});
+
+// ---------- Analytics: aggregation for the dashboard ----------
+
+test('aggregateAnalyticsEvents builds the funnel and success rate within the window', () => {
+  const now = Date.now();
+  const recent = (mins) => new Date(now - mins * 60000).toISOString();
+  const rows = [
+    { type: 'app_opened', meta: {}, platform: 'Android/Chrome', created_at: recent(10) },
+    { type: 'capture_started', meta: {}, platform: 'Android/Chrome', created_at: recent(9) },
+    { type: 'capture_method', meta: { method: 'voice' }, platform: 'Android/Chrome', created_at: recent(9) },
+    { type: 'capture_succeeded', meta: { method: 'voice' }, platform: 'Android/Chrome', created_at: recent(8) },
+    { type: 'capture_failed', meta: { kind: 'parse' }, platform: 'Android/Chrome', created_at: recent(7) },
+    { type: 'tab_viewed', meta: { tab: 'tasks' }, platform: 'Android/Chrome', created_at: recent(6) },
+    { type: 'tab_viewed', meta: { tab: 'tasks' }, platform: 'iOS/Safari', created_at: recent(5) },
+    { type: 'calendar_synced', meta: { count: 3 }, platform: 'Android/Chrome', created_at: recent(4) },
+    // An old row that must be excluded from the window but still counts in totalEvents.
+    { type: 'capture_succeeded', meta: { method: 'text' }, platform: 'Windows/Chrome', created_at: new Date(now - 30 * 86400000).toISOString() },
+  ];
+  const a = aggregateAnalyticsEvents(rows, { nowMs: now, windowDays: 7 });
+  assert.equal(a.totalEvents, 9);
+  assert.equal(a.eventsInWindow, 8);
+  assert.equal(a.funnel.capture_succeeded, 1);
+  assert.equal(a.funnel.capture_failed, 1);
+  assert.equal(a.funnel.successRate, 50); // 1 of 2 finished captures
+  assert.equal(a.captureMethods.voice, 1);
+  assert.equal(a.calendar.itemsSynced, 3);
+  assert.equal(a.topTabs[0][0], 'tasks');
+  assert.equal(a.topTabs[0][1], 2);
+  assert.equal(a.platforms['Android/Chrome'], 7);
+});
+
+test('aggregateAnalyticsEvents handles an empty table without throwing or dividing by zero', () => {
+  const a = aggregateAnalyticsEvents([], { nowMs: Date.now() });
+  assert.equal(a.totalEvents, 0);
+  assert.equal(a.funnel.successRate, null); // no finished captures -> null, not NaN
+  assert.deepEqual(a.topTabs, []);
 });

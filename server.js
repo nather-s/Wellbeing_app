@@ -11,6 +11,11 @@ import {
   consolidateTaskEventOverlap,
   sanitizeProfileText,
   aggregateUsageStats,
+  aggregateAnalyticsEvents,
+  sanitizeAnalyticsMeta,
+  coarsePlatform,
+  ANALYTICS_EVENT_TYPES,
+  CLIENT_TRACKABLE_TYPES,
 } from './server-utils.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +30,23 @@ const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'agrawalekansh29@gmail.com').toL
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
+
+// Fire-and-forget analytics writer. Best-effort by design: a failed insert must NEVER
+// break the user's actual request, so this swallows its own errors. Content-free — see
+// sanitizeAnalyticsMeta; only whitelisted, bounded metadata is ever stored.
+async function logEvent(userId, type, meta = {}, userAgent = null) {
+  if (!ANALYTICS_EVENT_TYPES.has(type)) return;
+  try {
+    await supabase.from('analytics_events').insert({
+      user_id: userId || null,
+      type,
+      meta: sanitizeAnalyticsMeta(type, meta),
+      platform: userAgent ? coarsePlatform(userAgent) : null,
+    });
+  } catch (err) {
+    console.warn('analytics insert failed:', err.message);
+  }
+}
 
 // Free models get rate-limited/rotated, so we try a CHAIN of known-good free models in order.
 // A model only "succeeds" if its output actually parses — garbage output moves to the next one.
@@ -349,6 +371,7 @@ app.get('/auth/google/callback', async (req, res) => {
       console.error('Storing Google tokens failed:', upErr.message);
       return res.redirect('/?google=error');
     }
+    logEvent(userId, 'calendar_connected', {}, req.get('user-agent'));
     res.redirect('/?google=connected');
   } catch (err) {
     console.error('Google callback error:', err);
@@ -421,10 +444,48 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
   }
 });
 
+// Browser-reported analytics. Batched to keep it cheap, capped to keep it abuse-proof,
+// and filtered to CLIENT_TRACKABLE_TYPES so the browser can only report the handful of
+// content-free events it's allowed to. Always answers 204 — analytics must never make
+// the client think something failed.
+app.post('/api/track', async (req, res) => {
+  try {
+    const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, 50) : [];
+    const ua = req.get('user-agent');
+    await Promise.all(
+      events
+        .filter((e) => e && CLIENT_TRACKABLE_TYPES.has(e.type))
+        .map((e) => logEvent(req.userId, e.type, e.meta || {}, ua))
+    );
+  } catch (err) {
+    console.warn('track endpoint error:', err.message);
+  }
+  res.status(204).end();
+});
+
+app.get('/api/admin/analytics', requireAdmin, async (req, res) => {
+  try {
+    const windowDays = Number(req.query.window_days) || 7;
+    // Pull only the columns the aggregator needs. At MVP volume a full scan is fine;
+    // the (type, created_at) index is here for when it isn't.
+    const { data, error } = await supabase
+      .from('analytics_events')
+      .select('type, meta, platform, created_at');
+    if (error) throw new Error(error.message);
+    res.json(aggregateAnalyticsEvents(data, { windowDays }));
+  } catch (err) {
+    console.error('Admin analytics failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/process', captureRateLimit, async (req, res) => {
+  const ua = req.get('user-agent');
+  const method = req.body?.source === 'text' ? 'text' : 'voice';
   try {
     const { transcript, tz_offset_minutes } = req.body;
     if (!transcript || !transcript.trim()) {
+      logEvent(req.userId, 'capture_failed', { kind: 'empty' }, ua);
       return res.status(400).json({ error: 'Empty transcript' });
     }
     const tzOffset = Number.isFinite(tz_offset_minutes) ? tz_offset_minutes : null;
@@ -453,8 +514,11 @@ Voice note transcript:
     } catch (err) {
       console.error(err.message);
       if (err instanceof RateLimitError) {
+        logEvent(userId, 'capture_failed', { kind: 'rate_limit' }, ua);
         return res.status(429).json({ error: 'Loop is a little busy right now — wait a minute and try again.' });
       }
+      const kind = /timeout|aborted/i.test(err.message) ? 'timeout' : 'parse';
+      logEvent(userId, 'capture_failed', { kind }, ua);
       return res.status(502).json({ error: "Couldn't understand that one — try rephrasing it.", detail: err.message });
     }
 
@@ -554,6 +618,8 @@ Voice note transcript:
     } catch (err) {
       console.warn('Google Calendar sync skipped:', err.message);
     }
+    if (googleSyncedItems.length) logEvent(userId, 'calendar_synced', { count: googleSyncedItems.length }, ua);
+    logEvent(userId, 'capture_succeeded', { method }, ua);
 
     res.json({
       transcript,
@@ -571,6 +637,7 @@ Voice note transcript:
     });
   } catch (err) {
     console.error(err);
+    logEvent(req.userId, 'capture_failed', { kind: 'server' }, ua);
     res.status(500).json({ error: 'Server error', detail: err.message });
   }
 });
@@ -646,6 +713,7 @@ app.post('/api/profile/energy', async (req, res) => {
     .from('profiles')
     .upsert({ user_id: req.userId, energy, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
   if (error) return res.status(500).json({ error: error.message });
+  logEvent(req.userId, 'energy_set', { energy }, req.get('user-agent'));
   res.json({ ok: true, energy });
 });
 
@@ -711,6 +779,7 @@ ${list}`;
       if (!error) moved++;
     }
 
+    logEvent(req.userId, 'catchup_used', {}, req.get('user-agent'));
     res.json({
       moved,
       message: typeof plan.message === 'string' && plan.message

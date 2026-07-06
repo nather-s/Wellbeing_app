@@ -159,6 +159,7 @@ function showApp() {
   appRoot.hidden = false;
   if (!appShown) {
     appShown = true;
+    track('app_opened');
     refreshAllPanels();
     // Landing back here after the Google consent screen? Tell them how it went.
     const google = new URLSearchParams(location.search).get('google');
@@ -244,6 +245,33 @@ async function authedFetch(url, opts = {}) {
   }
   return res;
 }
+
+// ---------- Product analytics (content-free) ----------
+// Fires small "this happened" pings, batched and debounced so a burst of tab clicks
+// is one request. Never sends anything the user typed or said — only an event type
+// and whitelisted metadata (which tab, voice/text). Best-effort: failures are ignored
+// and never block the UI. The server re-validates every event before storing it.
+let trackQueue = [];
+let trackTimer = null;
+function flushTrack() {
+  trackTimer = null;
+  if (!trackQueue.length) return;
+  const batch = trackQueue;
+  trackQueue = [];
+  // keepalive lets the final batch survive a page unload (e.g. closing the tab).
+  authedFetch('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ events: batch }),
+    keepalive: true,
+  }).catch(() => { /* analytics are best-effort */ });
+}
+function track(type, meta) {
+  trackQueue.push(meta ? { type, meta } : { type });
+  if (!trackTimer) trackTimer = setTimeout(flushTrack, 1500);
+}
+// Don't lose the last few events if the user closes the tab mid-debounce.
+window.addEventListener('pagehide', flushTrack);
 
 // ---------- Voice capture ----------
 let recognizing = false;
@@ -335,6 +363,7 @@ if (!SpeechRecognitionAPI) {
 
   recognition.onerror = (event) => {
     dbg(`onerror  error=${event.error}`);
+    track('speech_error', { code: event.error });
   };
 
   recognition.onend = () => {
@@ -359,6 +388,8 @@ if (!SpeechRecognitionAPI) {
 
 function startListening() {
   recognizing = true;
+  track('capture_started');
+  track('capture_method', { method: 'voice' });
   finalTranscript = '';
   sessionText = '';
   dbgT0 = performance.now();
@@ -386,7 +417,7 @@ function stopListening() {
   }
 }
 
-async function processTranscript(transcript) {
+async function processTranscript(transcript, source = 'voice') {
   textSubmit.disabled = true;
   try {
     const res = await authedFetch('/api/process', {
@@ -394,6 +425,7 @@ async function processTranscript(transcript) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         transcript,
+        source, // 'voice' | 'text' — for analytics only; server never stores the transcript
         // Positive = ahead of UTC (e.g. India = +330). Lets the server resolve
         // "tomorrow at 7am" in YOUR timezone, not the server's.
         tz_offset_minutes: -new Date().getTimezoneOffset(),
@@ -445,7 +477,9 @@ textForm.addEventListener('submit', (e) => {
   textInput.value = '';
   liveTranscript.textContent = '';
   captureHint.textContent = 'Sorting it out…';
-  processTranscript(text);
+  track('capture_started');
+  track('capture_method', { method: 'text' });
+  processTranscript(text, 'text');
 });
 
 // ---------- Energy onboarding (one question, big payoff) ----------
@@ -515,6 +549,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     const panel = document.getElementById(`panel-${tab.dataset.tab}`);
     panel.hidden = false;
     stagger(panel);
+    track('tab_viewed', { tab: tab.dataset.tab });
     playSound('pop');
     buzz(8);
   });
@@ -702,6 +737,7 @@ function renderProfile(profile, google = { configured: false, connected: false }
   const connectBtn = document.getElementById('googleConnect');
   if (connectBtn) {
     connectBtn.addEventListener('click', async () => {
+      track('calendar_connect_clicked');
       connectBtn.disabled = true;
       connectBtn.textContent = 'Opening Google…';
       try {
@@ -766,11 +802,13 @@ function buildCard(item, type) {
       el.addEventListener('click', async () => {
         playSound(item.done ? 'pop' : 'success'); // completing feels bigger than un-completing
         buzz(12);
+        if (!item.done) track('task_completed'); // only the false→true transition is a "completion"
         await authedFetch(`/api/tasks/${item.id}/toggle`, { method: 'PATCH' });
         refreshAllPanels();
       });
     } else {
       el.addEventListener('click', async () => {
+        track('task_deleted');
         await authedFetch(`/api/tasks/${item.id}`, { method: 'DELETE' });
         refreshAllPanels();
       });
@@ -779,6 +817,7 @@ function buildCard(item, type) {
 
   card.querySelectorAll('[data-kind="event"]').forEach((el) => {
     el.addEventListener('click', async () => {
+      track('event_deleted');
       await authedFetch(`/api/events/${item.id}`, { method: 'DELETE' });
       refreshAllPanels();
     });
@@ -811,6 +850,12 @@ async function checkAdminAccess() {
     if (res.ok) {
       adminTab.hidden = false;
       renderAdminStats(await res.json());
+      // Behavioural analytics live behind the same admin gate. Fetched separately so a
+      // failure here still leaves the core user stats above intact.
+      try {
+        const aRes = await authedFetch('/api/admin/analytics');
+        if (aRes.ok) renderAnalytics(await aRes.json());
+      } catch { /* analytics section is optional */ }
     }
     // A 403 for anyone else is expected and silent — not an error, just "not you".
   } catch { /* stats are a nice-to-have, never worth surfacing an error for */ }
@@ -842,6 +887,83 @@ function renderAdminStats(stats) {
         <thead><tr><th>Email</th><th>Joined</th><th>Captures</th><th>Last active</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="4">No users yet.</td></tr>'}</tbody>
       </table>
+    </div>
+    <div id="analyticsSection"></div>
+  `;
+}
+
+// Renders the behavioural analytics from aggregateAnalyticsEvents into the admin panel.
+// Everything here is content-free counts — funnel, methods, calendar, errors, platforms.
+function renderAnalytics(a) {
+  const section = document.getElementById('analyticsSection');
+  if (!section) return;
+
+  const bars = (obj, emptyLabel) => {
+    const entries = Object.entries(obj || {}).sort((x, y) => y[1] - x[1]);
+    if (!entries.length) return `<p class="profile-empty">${emptyLabel}</p>`;
+    const max = Math.max(...entries.map((e) => e[1]));
+    return entries.map(([label, n]) => `
+      <div class="bar-row">
+        <span class="bar-label">${escapeHtml(label)}</span>
+        <span class="bar-track"><span class="bar-fill" style="width:${Math.round((n / max) * 100)}%"></span></span>
+        <span class="bar-num">${n}</span>
+      </div>`).join('');
+  };
+
+  const f = a.funnel || {};
+  const rate = f.successRate == null ? '—' : `${f.successRate}%`;
+
+  section.innerHTML = `
+    <div class="analytics-head">
+      <h3>Behaviour · last ${a.windowDays}d</h3>
+      <span class="analytics-sub">${a.eventsInWindow} events · ${a.totalEvents} all-time</span>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-num">${f.app_opened || 0}</div><div class="stat-label">App opens</div></div>
+      <div class="stat-card"><div class="stat-num">${f.capture_started || 0}</div><div class="stat-label">Captures started</div></div>
+      <div class="stat-card"><div class="stat-num">${f.capture_succeeded || 0}</div><div class="stat-label">Captures done</div></div>
+      <div class="stat-card"><div class="stat-num">${rate}</div><div class="stat-label">Success rate</div></div>
+    </div>
+
+    <div class="analytics-cols">
+      <div class="profile-card">
+        <h4>Voice vs. text</h4>
+        ${bars(a.captureMethods, 'No captures yet.')}
+      </div>
+      <div class="profile-card">
+        <h4>Most-viewed tabs</h4>
+        ${bars(Object.fromEntries(a.topTabs || []), 'No tab views yet.')}
+      </div>
+      <div class="profile-card">
+        <h4>Devices</h4>
+        ${bars(a.platforms, 'No data yet.')}
+      </div>
+      <div class="profile-card">
+        <h4>Calendar</h4>
+        <div class="mini-stats">
+          <span>Connect clicks: <strong>${a.calendar?.connectClicked || 0}</strong></span>
+          <span>Connected: <strong>${a.calendar?.connected || 0}</strong></span>
+          <span>Sync events: <strong>${a.calendar?.syncEvents || 0}</strong></span>
+          <span>Items synced: <strong>${a.calendar?.itemsSynced || 0}</strong></span>
+        </div>
+      </div>
+      <div class="profile-card">
+        <h4>Actions</h4>
+        <div class="mini-stats">
+          <span>Tasks completed: <strong>${a.actions?.task_completed || 0}</strong></span>
+          <span>Tasks deleted: <strong>${a.actions?.task_deleted || 0}</strong></span>
+          <span>Events deleted: <strong>${a.actions?.event_deleted || 0}</strong></span>
+          <span>Fix-my-week: <strong>${a.catchupUsed || 0}</strong></span>
+        </div>
+      </div>
+      <div class="profile-card">
+        <h4>Errors</h4>
+        <div class="analytics-subhead">Capture failures</div>
+        ${bars(a.errors?.captureFailedByKind, 'None 🎉')}
+        <div class="analytics-subhead">Speech errors</div>
+        ${bars(a.errors?.speechErrorByCode, 'None 🎉')}
+      </div>
     </div>
   `;
 }
