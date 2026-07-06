@@ -248,15 +248,30 @@ async function authedFetch(url, opts = {}) {
 // ---------- Voice capture ----------
 let recognizing = false;
 let recognition = null;
-let finalTranscript = '';
-// Watermark of how many of the current session's results[] entries are already
-// folded into finalTranscript. Some Android builds re-emit earlier interim guesses
-// as fresh (non-final) entries instead of updating them in place — summing the
-// whole array every event (the old approach) echoed every stale copy, producing
-// "I have a meeting, I have a meeting, I have a meeting at 9, at 9, at 9". Only
-// ever adding each isFinal index once, and only showing the latest interim guess,
-// fixes that without depending on the engine behaving per-spec.
-let finalizedCount = 0;
+let finalTranscript = '';   // committed text carried across auto-restarts
+let sessionText = '';       // best full text for the CURRENT recognition session
+
+// Rebuild the full transcript for one session from its results[]. Engines disagree
+// wildly on what results[] means, so this handles both observed shapes:
+//   • Android Chrome: every result is marked "final", and results[] is a growing
+//     list of full-sentence SNAPSHOTS — each entry contains the previous one
+//     (["I", "I have", "I have a meeting", ...]). Naively concatenating them gave
+//     "II haveI have a meeting...". Here a snapshot that extends the running text
+//     just SUPERSEDES it.
+//   • Desktop Chrome: results[] holds disjoint SEGMENTS to concatenate
+//     (["I have a meeting ", "at 9"]). Those get appended.
+// Rebuilt from scratch each event, so there's no watermark to drift out of sync.
+function buildSessionText(results) {
+  let full = '';
+  for (let i = 0; i < results.length; i++) {
+    const t = results[i][0].transcript;
+    if (!t) continue;
+    if (t.startsWith(full)) full = t;          // cumulative snapshot — supersede
+    else if (full.startsWith(t)) continue;     // shorter stale duplicate — ignore
+    else full += t;                            // disjoint segment — append
+  }
+  return full;
+}
 
 // ---------- Speech debug ----------
 // Sticky: ?debug=1 turns it on and REMEMBERS it (localStorage), so it survives
@@ -297,36 +312,25 @@ if (!SpeechRecognitionAPI) {
 
   recognition.onstart = () => {
     // Each session (including auto-restarts below) gets its own results[] indexed
-    // from 0, so the finalized watermark must reset with it.
-    finalizedCount = 0;
-    dbg('onstart  (finalizedCount reset to 0)');
+    // from 0, so the per-session text resets with it.
+    sessionText = '';
+    dbg('onstart  (sessionText reset)');
   };
 
   recognition.onresult = (event) => {
-    // Raw dump: resultIndex + every entry's isFinal flag and text. This is the data
-    // that tells us what Android actually emits when transcripts duplicate.
+    // Raw dump: resultIndex + every entry's isFinal flag and text. Kept for future
+    // device debugging under ?debug=1.
     if (DEBUG_SPEECH) {
       const rows = [];
       for (let i = 0; i < event.results.length; i++) {
         rows.push(`[${i}]${event.results[i].isFinal ? 'F' : 'i'}="${event.results[i][0].transcript}"`);
       }
-      dbg(`onresult resultIndex=${event.resultIndex} len=${event.results.length} finalizedCount=${finalizedCount} ${rows.join(' ')}`);
+      dbg(`onresult resultIndex=${event.resultIndex} len=${event.results.length} ${rows.join(' ')}`);
     }
 
-    let interim = '';
-    for (let i = 0; i < event.results.length; i++) {
-      const result = event.results[i];
-      if (result.isFinal) {
-        if (i >= finalizedCount) {
-          finalTranscript += result[0].transcript;
-          finalizedCount = i + 1;
-        }
-      } else {
-        interim = result[0].transcript; // latest guess only — drop stale duplicates
-      }
-    }
-    liveTranscript.textContent = finalTranscript + interim;
-    dbg(`  -> display="${finalTranscript + interim}"`);
+    sessionText = buildSessionText(event.results);
+    liveTranscript.textContent = finalTranscript + sessionText;
+    dbg(`  -> display="${finalTranscript + sessionText}"`);
   };
 
   recognition.onerror = (event) => {
@@ -336,7 +340,10 @@ if (!SpeechRecognitionAPI) {
   recognition.onend = () => {
     dbg(`onend    recognizing=${recognizing}${recognizing ? ' -> auto restart' : ''}`);
     if (recognizing) {
-      // Auto-restart if the browser cut it off mid-recording while user is still holding the session.
+      // Commit this session's text before the fresh session wipes results[], then
+      // auto-restart because the browser cut us off while the user is still holding.
+      if (sessionText) finalTranscript += sessionText + ' ';
+      sessionText = '';
       recognition.start();
     }
   };
@@ -353,6 +360,7 @@ if (!SpeechRecognitionAPI) {
 function startListening() {
   recognizing = true;
   finalTranscript = '';
+  sessionText = '';
   dbgT0 = performance.now();
   dbg('--- tap: start listening ---');
   liveTranscript.textContent = '';
