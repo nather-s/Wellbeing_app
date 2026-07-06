@@ -258,8 +258,17 @@ let finalTranscript = '';
 // fixes that without depending on the engine behaving per-spec.
 let finalizedCount = 0;
 
-// ---------- Speech debug (only active with ?debug=1) ----------
-const DEBUG_SPEECH = new URLSearchParams(location.search).get('debug') === '1';
+// ---------- Speech debug ----------
+// Sticky: ?debug=1 turns it on and REMEMBERS it (localStorage), so it survives
+// reloads, the login step, and launching from an installed PWA icon (which opens
+// a fixed start URL and would otherwise drop the query string). ?debug=0 turns
+// it off. Once on, the panel shows on the capture screen every launch until cleared.
+const debugParam = new URLSearchParams(location.search).get('debug');
+if (debugParam === '1') { try { localStorage.setItem('loopDebugSpeech', '1'); } catch {} }
+if (debugParam === '0') { try { localStorage.removeItem('loopDebugSpeech'); } catch {} }
+let debugStored = '0';
+try { debugStored = localStorage.getItem('loopDebugSpeech') || '0'; } catch {}
+const DEBUG_SPEECH = debugParam === '1' || debugStored === '1';
 const speechDebugLog = document.getElementById('speechDebugLog');
 if (DEBUG_SPEECH) {
   const panel = document.getElementById('speechDebug');
