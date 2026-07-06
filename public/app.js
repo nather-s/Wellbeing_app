@@ -633,12 +633,13 @@ function renderProfile(profile, google = { configured: false, connected: false }
       <button class="google-btn google-disconnect" id="googleDisconnect">Disconnect</button>
     `;
   } else {
-    // Google is still in "Testing" mode (app verification pending) — only accounts we've
-    // manually added can actually connect. A raw Google "access blocked" page reads as
-    // broken, so set expectations honestly instead of letting people hit that cold.
+    // The app is Published but not yet formally verified by Google, so anyone CAN connect
+    // (no more manual allowlist) but will see Google's standard "unverified app" warning
+    // first. That warning is safe to click through — set expectations so it doesn't read
+    // as broken.
     googleSection = `
       <p class="profile-empty">Connect your calendar and every captured event — plus auto-planned study blocks — shows up there instantly.</p>
-      <p class="profile-note">🚧 Early access — if you haven't been added yet, tap Connect and if Google blocks it, just <a href="mailto:${SUPPORT_EMAIL}?subject=Add me to Loop's Google Calendar beta">email us</a> and we'll add you.</p>
+      <p class="profile-note">🚧 Google may show an "unverified app" warning first — that's expected while we finish Google's review. Tap Advanced → Go to Loop to continue safely. Trouble connecting? <a href="mailto:${SUPPORT_EMAIL}?subject=Trouble connecting Google Calendar">email us</a>.</p>
       <button class="google-btn" id="googleConnect">📅 Connect Google Calendar</button>
     `;
   }
