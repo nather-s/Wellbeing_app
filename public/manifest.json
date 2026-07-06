@@ -4,8 +4,8 @@
   "description": "Dump your academic panic by voice. Loop turns the chaos into an organized week — tasks, deadlines, study plans.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#12141C",
-  "theme_color": "#12141C",
+  "background_color": "#F3F5F1",
+  "theme_color": "#F3F5F1",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
   ],

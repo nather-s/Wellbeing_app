@@ -7,15 +7,10 @@
 <link rel="manifest" href="/manifest.json" />
 <link rel="icon" href="/icon.svg" type="image/svg+xml" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-
-<!-- Ambient neon lighting behind everything -->
-<div class="bg-glow bg-glow-1"></div>
-<div class="bg-glow bg-glow-2"></div>
-<div class="bg-glow bg-glow-3"></div>
 
 <!-- Landing / pitch page — shown until the person is signed in. The login form at the
      bottom is the real product; everything above it is the "website" wrapper around it. -->
@@ -106,7 +101,7 @@
         <button type="submit" id="codeSubmit">Verify &amp; log in</button>
       </form>
       <p class="login-status" id="loginStatus"></p>
-      <p class="login-version">build 2026-07-06.2</p>
+      <p class="login-version">build 2026-07-06.3</p>
     </div>
   </section>
 
@@ -118,47 +113,13 @@
 
 <div class="app" id="appRoot" hidden>
 
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark"></span>
-      <span class="brand-name">Loop</span>
-    </div>
-    <div class="topbar-right">
-      <div class="streak-pill" id="streakPill" hidden title="Days in a row you've captured something">🔥 0</div>
-      <div class="profile-pill" id="profilePill" title="What Loop has learned about you">
-        Still getting to know you
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">Loop</span>
       </div>
-      <button class="logout-btn" id="logoutBtn" title="Log out">Log out</button>
     </div>
-  </header>
-
-  <main class="stage">
-    <section class="capture">
-      <button id="micButton" class="mic-button" aria-label="Start recording">
-        <svg viewBox="0 0 24 24" class="mic-icon"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="12" y1="18" x2="12" y2="22" stroke="currentColor" stroke-width="1.6"/></svg>
-        <span class="pulse-ring"></span>
-      </button>
-      <p class="capture-hint" id="captureHint">Tap and dump it all — the midterm, the email you owe your TA, the laundry. Loop sorts it.</p>
-      <p class="live-transcript" id="liveTranscript"></p>
-      <form id="textForm" class="text-capture" autocomplete="off">
-        <input id="textInput" type="text" placeholder="Clear your mind here…" aria-label="Type a note" />
-        <button type="submit" id="textSubmit">Add</button>
-      </form>
-    </section>
-
-    <!-- One-question onboarding: shown until the student picks when their brain works -->
-    <section class="energy-bar" id="energyBar" hidden>
-      <span>When does your brain actually work?</span>
-      <div class="energy-choices">
-        <button id="energyMorning" type="button">🌅 Mornings</button>
-        <button id="energyNight" type="button">🌙 Late night</button>
-      </div>
-    </section>
-
-    <section class="results" id="resultsPanel" hidden>
-      <h2>Just captured</h2>
-      <div id="resultsList" class="results-list"></div>
-    </section>
 
     <nav class="tabs">
       <button class="tab active" data-tab="today">
@@ -187,6 +148,43 @@
         <span class="tab-text">Stats</span>
       </button>
     </nav>
+
+    <div class="sidebar-foot">
+      <div class="streak-pill" id="streakPill" hidden title="Days in a row you've captured something">🌿 0</div>
+      <div class="profile-pill" id="profilePill" title="What Loop has learned about you">
+        Still getting to know you
+      </div>
+      <button class="logout-btn" id="logoutBtn" title="Log out">Log out</button>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <section class="capture">
+      <button id="micButton" class="mic-button" aria-label="Start recording">
+        <svg viewBox="0 0 24 24" class="mic-icon"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="12" y1="18" x2="12" y2="22" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span class="pulse-ring"></span>
+      </button>
+      <p class="capture-hint" id="captureHint">Tap and dump it all — the midterm, the email you owe your TA, the laundry. Loop sorts it.</p>
+      <p class="live-transcript" id="liveTranscript"></p>
+      <form id="textForm" class="text-capture" autocomplete="off">
+        <input id="textInput" type="text" placeholder="Clear your mind here…" aria-label="Type a note" />
+        <button type="submit" id="textSubmit">Add</button>
+      </form>
+    </section>
+
+    <!-- One-question onboarding: shown until the student picks when their brain works -->
+    <section class="energy-bar" id="energyBar" hidden>
+      <span>When does your brain actually work?</span>
+      <div class="energy-choices">
+        <button id="energyMorning" type="button">🌅 Mornings</button>
+        <button id="energyNight" type="button">🌙 Late night</button>
+      </div>
+    </section>
+
+    <section class="results" id="resultsPanel" hidden>
+      <h2>Just captured</h2>
+      <div id="resultsList" class="results-list"></div>
+    </section>
 
     <section class="panel" id="panel-today"></section>
     <section class="panel" id="panel-tasks" hidden></section>

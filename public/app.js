@@ -15,56 +15,23 @@ const energyMorning = document.getElementById('energyMorning');
 const energyNight = document.getElementById('energyNight');
 const streakPill = document.getElementById('streakPill');
 
-// ---------- Juice: sounds, haptics, confetti, streaks ----------
-// All synthesized with the Web Audio API — zero audio files, zero network requests,
-// and everything is fenced so a decoration failing can never break the app.
-let audioCtx = null;
-function playSound(kind) {
-  try {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    const notes = {
-      start: [[523.25, 0, 0.1], [783.99, 0.09, 0.14]],       // rising: "I'm listening"
-      stop: [[783.99, 0, 0.09], [523.25, 0.08, 0.12]],       // falling: "got it, working"
-      success: [[523.25, 0, 0.09], [659.25, 0.08, 0.09], [783.99, 0.16, 0.18]], // little arpeggio
-      pop: [[880, 0, 0.07]],                                  // tiny tick for small wins
-    }[kind] || [];
-    for (const [freq, delay, dur] of notes) {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      const t = audioCtx.currentTime + delay;
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.14, t + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      osc.connect(gain).connect(audioCtx.destination);
-      osc.start(t);
-      osc.stop(t + dur + 0.05);
-    }
-  } catch { /* sound is decoration, never load-bearing */ }
+// ---------- Feedback: calm, quiet acknowledgment ----------
+// The old build celebrated every capture with a chime and a confetti burst. For a
+// wellbeing app aimed at overwhelmed students, that's exactly the wrong feeling —
+// so acknowledgment is now silent and gentle: a soft settle on the breathing ring,
+// plus an optional barely-there haptic tap on phones. These stay as functions so all
+// existing call sites keep working; they simply do something quiet now.
+function playSound() { /* intentionally silent — calm over dopamine */ }
+
+function buzz() {
+  // A single, barely-there tap on touch devices. Ignores the old celebratory patterns.
+  try { if (navigator.vibrate) navigator.vibrate(8); } catch { /* haptics are optional */ }
 }
 
-function buzz(pattern) {
-  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch { /* same */ }
-}
-
-const CONFETTI_COLORS = ['#7C3AED', '#EC4899', '#F59E0B', '#22D3EE', '#ffffff'];
+// A soft one-shot settle on the capture ring instead of a particle burst.
 function confettiBurst() {
-  for (let i = 0; i < 14; i++) {
-    const p = document.createElement('span');
-    p.className = 'confetti';
-    const angle = (Math.PI * 2 * i) / 14 + Math.random() * 0.5;
-    const dist = 70 + Math.random() * 90;
-    p.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
-    p.style.setProperty('--dy', `${Math.sin(angle) * dist}px`);
-    p.style.setProperty('--rot', `${Math.random() * 540 - 270}deg`);
-    p.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
-    micButton.appendChild(p);
-    setTimeout(() => p.remove(), 950);
-  }
-  micButton.classList.add('celebrate');
-  setTimeout(() => micButton.classList.remove('celebrate'), 750);
+  micButton.classList.add('just-captured');
+  setTimeout(() => micButton.classList.remove('just-captured'), 1400);
 }
 
 // Streak = consecutive days with at least one capture. Missing today doesn't kill it
@@ -89,7 +56,7 @@ function computeStreak(itemLists) {
 function updateStreak(itemLists) {
   const streak = computeStreak(itemLists);
   streakPill.hidden = streak < 1;
-  streakPill.textContent = `🔥 ${streak}`;
+  streakPill.textContent = `🌿 ${streak}`;
 }
 
 // Cards pop in one after another when a panel refreshes.
