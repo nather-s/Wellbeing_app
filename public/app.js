@@ -248,6 +248,15 @@ async function authedFetch(url, opts = {}) {
 // ---------- Voice capture ----------
 let recognizing = false;
 let recognition = null;
+let finalTranscript = '';
+// Watermark of how many of the current session's results[] entries are already
+// folded into finalTranscript. Some Android builds re-emit earlier interim guesses
+// as fresh (non-final) entries instead of updating them in place — summing the
+// whole array every event (the old approach) echoed every stale copy, producing
+// "I have a meeting, I have a meeting, I have a meeting at 9, at 9, at 9". Only
+// ever adding each isFinal index once, and only showing the latest interim guess,
+// fixes that without depending on the engine behaving per-spec.
+let finalizedCount = 0;
 
 const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -260,12 +269,26 @@ if (!SpeechRecognitionAPI) {
   recognition.interimResults = true;
   recognition.lang = 'en-US';
 
+  recognition.onstart = () => {
+    // Each session (including auto-restarts below) gets its own results[] indexed
+    // from 0, so the finalized watermark must reset with it.
+    finalizedCount = 0;
+  };
+
   recognition.onresult = (event) => {
-    let transcript = '';
+    let interim = '';
     for (let i = 0; i < event.results.length; i++) {
-      transcript += event.results[i][0].transcript;
+      const result = event.results[i];
+      if (result.isFinal) {
+        if (i >= finalizedCount) {
+          finalTranscript += result[0].transcript;
+          finalizedCount = i + 1;
+        }
+      } else {
+        interim = result[0].transcript; // latest guess only — drop stale duplicates
+      }
     }
-    liveTranscript.textContent = transcript;
+    liveTranscript.textContent = finalTranscript + interim;
   };
 
   recognition.onend = () => {
@@ -286,6 +309,7 @@ if (!SpeechRecognitionAPI) {
 
 function startListening() {
   recognizing = true;
+  finalTranscript = '';
   liveTranscript.textContent = '';
   micButton.classList.add('listening');
   captureHint.textContent = 'Listening — tap again when you\'re done.';
