@@ -258,6 +258,23 @@ let finalTranscript = '';
 // fixes that without depending on the engine behaving per-spec.
 let finalizedCount = 0;
 
+// ---------- Speech debug (only active with ?debug=1) ----------
+const DEBUG_SPEECH = new URLSearchParams(location.search).get('debug') === '1';
+const speechDebugLog = document.getElementById('speechDebugLog');
+if (DEBUG_SPEECH) {
+  const panel = document.getElementById('speechDebug');
+  if (panel) panel.hidden = false;
+  const clearBtn = document.getElementById('speechDebugClear');
+  if (clearBtn) clearBtn.addEventListener('click', () => { if (speechDebugLog) speechDebugLog.textContent = ''; });
+}
+let dbgT0 = 0;
+function dbg(line) {
+  if (!DEBUG_SPEECH || !speechDebugLog) return;
+  const t = dbgT0 ? Math.round(performance.now() - dbgT0) : 0;
+  speechDebugLog.textContent += `+${String(t).padStart(5)}ms  ${line}\n`;
+  speechDebugLog.scrollTop = speechDebugLog.scrollHeight;
+}
+
 const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 if (!SpeechRecognitionAPI) {
@@ -273,9 +290,20 @@ if (!SpeechRecognitionAPI) {
     // Each session (including auto-restarts below) gets its own results[] indexed
     // from 0, so the finalized watermark must reset with it.
     finalizedCount = 0;
+    dbg('onstart  (finalizedCount reset to 0)');
   };
 
   recognition.onresult = (event) => {
+    // Raw dump: resultIndex + every entry's isFinal flag and text. This is the data
+    // that tells us what Android actually emits when transcripts duplicate.
+    if (DEBUG_SPEECH) {
+      const rows = [];
+      for (let i = 0; i < event.results.length; i++) {
+        rows.push(`[${i}]${event.results[i].isFinal ? 'F' : 'i'}="${event.results[i][0].transcript}"`);
+      }
+      dbg(`onresult resultIndex=${event.resultIndex} len=${event.results.length} finalizedCount=${finalizedCount} ${rows.join(' ')}`);
+    }
+
     let interim = '';
     for (let i = 0; i < event.results.length; i++) {
       const result = event.results[i];
@@ -289,9 +317,15 @@ if (!SpeechRecognitionAPI) {
       }
     }
     liveTranscript.textContent = finalTranscript + interim;
+    dbg(`  -> display="${finalTranscript + interim}"`);
+  };
+
+  recognition.onerror = (event) => {
+    dbg(`onerror  error=${event.error}`);
   };
 
   recognition.onend = () => {
+    dbg(`onend    recognizing=${recognizing}${recognizing ? ' -> auto restart' : ''}`);
     if (recognizing) {
       // Auto-restart if the browser cut it off mid-recording while user is still holding the session.
       recognition.start();
@@ -310,6 +344,8 @@ if (!SpeechRecognitionAPI) {
 function startListening() {
   recognizing = true;
   finalTranscript = '';
+  dbgT0 = performance.now();
+  dbg('--- tap: start listening ---');
   liveTranscript.textContent = '';
   micButton.classList.add('listening');
   captureHint.textContent = 'Listening — tap again when you\'re done.';
