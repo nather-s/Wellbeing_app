@@ -950,6 +950,9 @@ body {
   opacity: 0.7;
 }
 
+.footer-links { margin-top: 6px; }
+.footer-links a { color: var(--ink-dim); text-decoration: underline; }
+
 #get-started { scroll-margin-top: 20px; }
 
 .login-card {
