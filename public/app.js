@@ -190,7 +190,7 @@ loginForm.addEventListener('submit', async (e) => {
   loginForm.hidden = true;
   codeForm.hidden = false;
   loginCode.focus();
-  loginStatus.textContent = '✓ Code sent! Use the code from the NEWEST email — requesting a new code kills all older ones.';
+  loginStatus.textContent = '✓ Code sent! Check your spam/junk folder if you don\'t see it. Use the code from the NEWEST email — requesting a new code kills all older ones.';
 });
 
 // Step 2: type the code back in. This calls Supabase directly and gets a session
