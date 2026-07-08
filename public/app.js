@@ -301,32 +301,6 @@ function buildSessionText(results) {
   return full;
 }
 
-// ---------- Speech debug ----------
-// Sticky: ?debug=1 turns it on and REMEMBERS it (localStorage), so it survives
-// reloads, the login step, and launching from an installed PWA icon (which opens
-// a fixed start URL and would otherwise drop the query string). ?debug=0 turns
-// it off. Once on, the panel shows on the capture screen every launch until cleared.
-const debugParam = new URLSearchParams(location.search).get('debug');
-if (debugParam === '1') { try { localStorage.setItem('loopDebugSpeech', '1'); } catch {} }
-if (debugParam === '0') { try { localStorage.removeItem('loopDebugSpeech'); } catch {} }
-let debugStored = '0';
-try { debugStored = localStorage.getItem('loopDebugSpeech') || '0'; } catch {}
-const DEBUG_SPEECH = debugParam === '1' || debugStored === '1';
-const speechDebugLog = document.getElementById('speechDebugLog');
-if (DEBUG_SPEECH) {
-  const panel = document.getElementById('speechDebug');
-  if (panel) panel.hidden = false;
-  const clearBtn = document.getElementById('speechDebugClear');
-  if (clearBtn) clearBtn.addEventListener('click', () => { if (speechDebugLog) speechDebugLog.textContent = ''; });
-}
-let dbgT0 = 0;
-function dbg(line) {
-  if (!DEBUG_SPEECH || !speechDebugLog) return;
-  const t = dbgT0 ? Math.round(performance.now() - dbgT0) : 0;
-  speechDebugLog.textContent += `+${String(t).padStart(5)}ms  ${line}\n`;
-  speechDebugLog.scrollTop = speechDebugLog.scrollHeight;
-}
-
 const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 if (!SpeechRecognitionAPI) {
@@ -342,32 +316,18 @@ if (!SpeechRecognitionAPI) {
     // Each session (including auto-restarts below) gets its own results[] indexed
     // from 0, so the per-session text resets with it.
     sessionText = '';
-    dbg('onstart  (sessionText reset)');
   };
 
   recognition.onresult = (event) => {
-    // Raw dump: resultIndex + every entry's isFinal flag and text. Kept for future
-    // device debugging under ?debug=1.
-    if (DEBUG_SPEECH) {
-      const rows = [];
-      for (let i = 0; i < event.results.length; i++) {
-        rows.push(`[${i}]${event.results[i].isFinal ? 'F' : 'i'}="${event.results[i][0].transcript}"`);
-      }
-      dbg(`onresult resultIndex=${event.resultIndex} len=${event.results.length} ${rows.join(' ')}`);
-    }
-
     sessionText = buildSessionText(event.results);
     liveTranscript.textContent = finalTranscript + sessionText;
-    dbg(`  -> display="${finalTranscript + sessionText}"`);
   };
 
   recognition.onerror = (event) => {
-    dbg(`onerror  error=${event.error}`);
     track('speech_error', { code: event.error });
   };
 
   recognition.onend = () => {
-    dbg(`onend    recognizing=${recognizing}${recognizing ? ' -> auto restart' : ''}`);
     if (recognizing) {
       // Commit this session's text before the fresh session wipes results[], then
       // auto-restart because the browser cut us off while the user is still holding.
@@ -392,8 +352,6 @@ function startListening() {
   track('capture_method', { method: 'voice' });
   finalTranscript = '';
   sessionText = '';
-  dbgT0 = performance.now();
-  dbg('--- tap: start listening ---');
   liveTranscript.textContent = '';
   micButton.classList.add('listening');
   captureHint.textContent = 'Listening — tap again when you\'re done.';

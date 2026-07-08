@@ -166,15 +166,6 @@
       </button>
       <p class="capture-hint" id="captureHint">Tap and dump it all — the midterm, the email you owe your TA, the laundry. Loop sorts it.</p>
       <p class="live-transcript" id="liveTranscript"></p>
-      <!-- Raw speech-event log, hidden unless the page is opened with ?debug=1.
-           Used to capture exactly what Android emits when transcripts duplicate. -->
-      <div id="speechDebug" class="speech-debug" hidden>
-        <div class="speech-debug-head">
-          <strong>Speech debug</strong>
-          <button type="button" id="speechDebugClear">Clear</button>
-        </div>
-        <pre id="speechDebugLog"></pre>
-      </div>
       <form id="textForm" class="text-capture" autocomplete="off">
         <input id="textInput" type="text" placeholder="Clear your mind here…" aria-label="Type a note" />
         <button type="submit" id="textSubmit">Add</button>

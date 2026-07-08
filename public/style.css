@@ -281,45 +281,6 @@ body {
 .mic-button.listening .pulse-ring { animation-duration: 3.2s; opacity: 0.6; }
 
 /* Gentle one-shot acknowledgment on capture — a soft settle, no confetti */
-/* Speech debug panel — only rendered with ?debug=1 */
-.speech-debug {
-  width: 100%;
-  max-width: 720px;
-  margin: 14px auto 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  text-align: left;
-}
-.speech-debug-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-.speech-debug-head button {
-  font-size: 11px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--ink);
-  cursor: pointer;
-}
-.speech-debug pre {
-  margin: 0;
-  padding: 10px 12px;
-  max-height: 260px;
-  overflow: auto;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--ink);
-}
 
 .mic-button.just-captured .pulse-ring { animation: settle 1.4s ease-out; }
 @keyframes settle {
