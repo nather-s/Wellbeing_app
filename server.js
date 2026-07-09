@@ -86,6 +86,7 @@ Return ONLY valid JSON (no prose, no markdown fences) matching exactly this shap
 }
 
 Rules:
+- SPLIT, never merge: a brain dump almost always mentions SEVERAL separate things in one breath ("chem midterm Friday, gotta email my TA, and I'm out of clean clothes" = 1 event + 1 task + 1 note — THREE entries, not one). Give every distinct task, event, and note its OWN entry in its OWN array slot. Never fold multiple things into a single title (wrong: "email TA and do laundry" as one task; right: two separate task entries). Only combine two mentions into one entry if they clearly describe the exact same single thing said twice.
 - "due_phrase" / "start_phrase": copy the EXACT time words heard, verbatim (e.g. "tomorrow at 7am", "next Friday", "before section"). Always include the connecting word ("at", "on", "by") that was said — if someone just says a bare number like "9", write "at 9", not "9" alone. NEVER compute dates yourself — just quote the phrase. null if no time was mentioned.
 - "bucket" triages each task:
   - "deep_work" = focused brain time: studying, essays, problem sets, projects, coding, reading.
