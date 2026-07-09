@@ -50,13 +50,29 @@ async function logEvent(userId, type, meta = {}, userAgent = null) {
 
 // Free models get rate-limited/rotated, so we try a CHAIN of known-good free models in order.
 // A model only "succeeds" if its output actually parses — garbage output moves to the next one.
+// 8 deep on purpose: OpenRouter's free tier gets globally rate-limited under load
+// (verified live — 8 of 10 candidate models 429'd at once during testing), so a short
+// chain runs dry fast. Each hop only costs time on a failure, never money, so length
+// is free insurance. First two are confirmed live against our exact extraction prompt;
+// the rest are ordered by size/capability as a reasonable guess for JSON-following
+// quality. 'openrouter/free' stays last as a genuine wildcard (any live free model).
 const EXTRACT_MODEL_CHAIN = [
   'openai/gpt-oss-120b:free', // strongest stable free model for clean JSON extraction
   'openai/gpt-oss-20b:free', // smaller sibling, usually available when 120b is saturated
+  'nvidia/nemotron-3-super-120b-a12b:free',
   'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-next-80b-a3b-instruct:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
   'openrouter/free', // last resort: OpenRouter picks any live free model
 ];
-const CONSOLIDATE_MODEL_CHAIN = ['openai/gpt-oss-120b:free', 'openrouter/free'];
+const CONSOLIDATE_MODEL_CHAIN = [
+  'openai/gpt-oss-120b:free',
+  'openai/gpt-oss-20b:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'openrouter/free',
+];
 const API_TIMEOUT_MS = 30000; // don't let a hung upstream call hang our request handler forever
 
 const app = express();
